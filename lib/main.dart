@@ -1,21 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:nv_engine/theme/theme_provider.dart';
+import 'package:provider/provider.dart';
 
 void main() {
-  runApp(AntivirusApp());
+  runApp(ChangeNotifierProvider(
+    create: (context)=>ThemeProvider(),
+    child: const AntivirusApp(),
+  ));
 }
 
-class AntivirusApp extends StatelessWidget {
+class AntivirusApp extends StatefulWidget {
   const AntivirusApp({super.key});
+
+  @override
+  _AntivirusAppState createState() => _AntivirusAppState();
+}
+
+bool _darkModeEnabled = false;
+
+class _AntivirusAppState extends State<AntivirusApp>{
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'NV Engine',
-      theme: ThemeData(
-        primaryColor: Color(0xFF1F2A44),
-        scaffoldBackgroundColor: Color(0xFFF5F5F5),
-        fontFamily: 'Roboto',
-      ),
+      theme: Provider.of<ThemeProvider>(context).themeData,
       home: AntivirusHomePage(),
     );
   }
@@ -31,7 +40,6 @@ class AntivirusHomePage extends StatefulWidget {
 class _AntivirusHomePageState extends State<AntivirusHomePage> {
   bool _realTimeProtectionEnabled = true;
   bool _notificationsEnabled = true;
-  bool _darkModeEnabled = false;
   int _selectedIndex = 0;
   String _status = "Ready to scan!";
   bool _isScanning = false;
@@ -89,7 +97,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               color: _status.contains("No threats")
                   ? accentGreen
                   : (_status.contains("Ready")
-                      ? darkText
+                      ? Theme.of(context).textTheme.headlineLarge?.color
                       : Colors.orange),
             ),
             textAlign: TextAlign.center,
@@ -133,7 +141,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text("Protection Settings",
-                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: darkText)),
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                   SizedBox(height: 30),
 
                   if (!_realTimeProtectionEnabled)
@@ -243,7 +251,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text("Settings", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: darkText)),
+          Text("Settings", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           SizedBox(height: 20),
           SwitchListTile(
             value: _notificationsEnabled,
@@ -256,10 +264,9 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
           ),
           SwitchListTile(
             value: _darkModeEnabled,
-            onChanged: (val) {
-              setState(() {
-                _darkModeEnabled = val;
-              });
+            onChanged: (bool value) {
+              Provider.of<ThemeProvider>(context, listen:false).toggleTheme();
+              _darkModeEnabled = value;
             },
             title: Text("Dark Mode"),
           ),
