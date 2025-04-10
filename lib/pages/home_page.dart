@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
 import 'package:nv_engine/utils.dart';
+import 'package:nv_engine/models/mock_file.dart';
 
 
 class AntivirusHomePage extends StatefulWidget {
@@ -29,20 +30,43 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   final Color softGray = const Color(0xFFBFC0C0);
 
   Future<void> _startScan() async {
-    final newResult = ScanResult(timestamp: DateTime.now(), result: "No threats detected", );
+      List<MockFile> filesToScan = [
+        MockFile(filename: "System32.dll", infected: false),
+        MockFile(filename: "Secret_Trojan.exe", infected: true),
+        MockFile(filename: "Resume.pdf", infected: false),
+        MockFile(filename: "Downloader.mal", infected: true),
+        MockFile(filename: "vacation.jpg", infected: false),
+      ];
 
-    setState(() {
-      _isScanning = true;
-      _status = "Scanning... Please wait.";
-    });
+      int threats = 0;
 
-    await Future.delayed(const Duration(seconds: 3), () {
+      for (var file in filesToScan) {
+        setState(() {
+          _isScanning = true;
+          _status = "Scanning ${file.filename}...";
+        });
+
+        await Future.delayed(Duration(milliseconds: 600));
+
+        if (file.infected) threats++;
+      }
+
+      final result = threats == 0
+          ? "No threats detected."
+          : "$threats threat${threats > 1 ? 's' : ''} detected.";
+
+      final newResult = ScanResult(
+        timestamp: DateTime.now(),
+        result: result,
+      );
+
+      _scanHistory.add(newResult);
+
       setState(() {
         _isScanning = false;
-        _status = "Scan Complete! No threats detected.";
-        _scanHistory.add(newResult);
+        _status = "Scan Complete! $result";
       });
-    });
+
   }
 
   Widget _buildOverviewPage() {
@@ -228,7 +252,10 @@ Widget _buildReportPage() {
                   itemBuilder: (context, index) {
                     final scan = _scanHistory[index];
                     return ListTile(
-                      leading: const Icon(Icons.check_circle, color: Colors.green),
+                      leading: Icon(
+                        scan.result.contains("threat") ? Icons.error : Icons.check_circle,
+                        color: scan.result.contains("threat") ? Colors.red : Colors.green,
+                      ),
                       title: Text(scan.result),
                       subtitle: Text(scan.timestamp.toString()),
                     );
