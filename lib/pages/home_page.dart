@@ -188,13 +188,37 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     );
   }
 
-  Widget _buildReportPage() {
+Widget _buildReportPage() {
   return Padding(
     padding: const EdgeInsets.all(40.0),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text("Scan History", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              "Scan Report",
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            ElevatedButton.icon(
+              onPressed: _scanHistory.isEmpty
+                  ? null
+                  : () {
+                      setState(() {
+                        _scanHistory.clear();
+                      });
+                    },
+              icon: const Icon(Icons.delete, color: Colors.white),
+              label: const Text("Clear", style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 20),
         Expanded(
           child: _scanHistory.isEmpty
