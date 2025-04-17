@@ -9,7 +9,9 @@ import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
 import 'package:nv_engine/utils.dart';
 import 'package:nv_engine/models/mock_file.dart';
+
 import 'package:nv_engine/history_database.dart';
+import 'package:nv_engine/ai_service.dart';
 
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
@@ -34,52 +36,57 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   HistoryDatabase history = HistoryDatabase();
 
   Future<void> _startScan() async {
-      Random r = new Random();
-      double falseProbability = .5;
-      bool r1 = r.nextDouble() > falseProbability;
-      bool r2 = r.nextDouble() > falseProbability;
-      bool r3= r.nextDouble() > falseProbability;
-      bool r4 = r.nextDouble() > falseProbability;
-      bool r5 = r.nextDouble() > falseProbability;
-      
-      List<MockFile> filesToScan = [
-        MockFile(filename: "System32.dll", infected: r1),
-        MockFile(filename: "Secret_Trojan.exe", infected: r2),
-        MockFile(filename: "Resume.pdf", infected: r3),
-        MockFile(filename: "Downloader.mal", infected: r4),
-        MockFile(filename: "vacation.jpg", infected: r5),
-      ];
+    List<MockFile> filesToScan = [
+      MockFile(filename: "System32.dll", features: [8.2, 1.0, 4.0, 7.8]),
+      MockFile(filename: "Secret_Trojan.exe", features: [7.6, 1.0, 3.0, 6.9]),
+      MockFile(filename: "Resume.pdf", features: [4.2, 0.0, 0.0, 3.5]),
+      MockFile(filename: "Downloader.mal", features: [7.9, 1.0, 2.0, 7.1]),
+      MockFile(filename: "vacation.jpg", features: [5.1, 0.0, 1.0, 4.4]),
+    ];
 
-      int threats = 0;
+    int threats = 0;
 
-      for (var file in filesToScan) {
-        setState(() {
-          _isScanning = true;
-          _status = "Scanning ${file.filename}...";
-        });
-
-        await Future.delayed(Duration(milliseconds: 600));
-
-        if (file.infected) threats++;
-      }
-
-      final result = threats == 0
-          ? "No threats detected."
-          : "$threats threat${threats > 1 ? 's' : ''} detected.";
-
-      final newResult = ScanResult(
-        amount: threats
-      );
-
-      history.insertHistory(threats);
-
-      _scanHistory.add(newResult);
-
+    for (var file in filesToScan) {
       setState(() {
-        _isScanning = false;
-        _status = "Scan Complete! $result";
+        _status = "Scanning ${file.filename}...";
       });
 
+      await Future.delayed(Duration(milliseconds: 600));
+
+      final prediction = await runMalwarePrediction(file.features);
+      file.prediction = prediction;
+
+      if (prediction == 1) {
+        threats++;
+      }
+    }
+
+    final infectedFiles = filesToScan.where((f) => f.prediction == 1).toList();
+
+    print("🛑 Infected Files:");
+    if (infectedFiles.isEmpty) {
+      print("✅ No infected files found.");
+    } else {
+      for (var file in infectedFiles) {
+        print("- ${file.filename}");
+      }
+    }
+
+    final result =
+        threats == 0
+            ? "No threats detected."
+            : "$threats threat${threats > 1 ? 's' : ''} detected.";
+
+    final newResult = ScanResult(amount: threats);
+
+    history.insertHistory(threats);
+
+    _scanHistory.add(newResult);
+
+    setState(() {
+      _isScanning = false;
+      _status = "Scan Complete! $result";
+    });
   }
 
   Widget _buildOverviewPage() {
@@ -92,18 +99,23 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.shield, size: iconSize.clamp(120.0, 300.0), color: accentGreen),
+              Icon(
+                Icons.shield,
+                size: iconSize.clamp(120.0, 300.0),
+                color: accentGreen,
+              ),
               const SizedBox(height: 20),
               Text(
                 _status,
                 style: TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
-                  color: _status.contains("No threats")
-                      ? accentGreen
-                      : (_status.contains("Ready")
-                          ? Theme.of(context).textTheme.headlineLarge?.color
-                          : Colors.orange),
+                  color:
+                      _status.contains("No threats")
+                          ? accentGreen
+                          : (_status.contains("Ready")
+                              ? Theme.of(context).textTheme.headlineLarge?.color
+                              : Colors.orange),
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -117,10 +129,18 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                 onPressed: _isScanning ? null : _startScan,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: accentGreen,
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 40,
+                    vertical: 16,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
-                child: Text(_isScanning ? "Scanning..." : "Start Scan", style: const TextStyle(fontSize: 18, color: Colors.white)),
+                child: Text(
+                  _isScanning ? "Scanning..." : "Start Scan",
+                  style: const TextStyle(fontSize: 18, color: Colors.white),
+                ),
               ),
             ],
           ),
@@ -140,7 +160,10 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text("Protection Settings", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const Text(
+                    "Protection Settings",
+                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 30),
 
                   if (!_realTimeProtectionEnabled)
@@ -159,7 +182,10 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                           const Expanded(
                             child: Text(
                               "Warning: Real-Time Protection is disabled. Your system might be at risk.",
-                              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                color: Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ],
@@ -179,7 +205,9 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                   ListTile(
                     leading: Icon(Icons.shield, color: accentGreen),
                     title: const Text("Firewall: Active"),
-                    subtitle: const Text("Your system is protected from network threats."),
+                    subtitle: const Text(
+                      "Your system is protected from network threats.",
+                    ),
                   ),
 
                   ExpansionTile(
@@ -190,17 +218,26 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                       ListTile(
                         title: const Text("Malware.ABC"),
                         subtitle: const Text("Blocked on Apr 1"),
-                        trailing: ElevatedButton(onPressed: () {}, child: const Text("Details")),
+                        trailing: ElevatedButton(
+                          onPressed: () {},
+                          child: const Text("Details"),
+                        ),
                       ),
                       ListTile(
                         title: const Text("Trojan.XYZ"),
                         subtitle: const Text("Blocked on Mar 30"),
-                        trailing: ElevatedButton(onPressed: () {}, child: const Text("Details")),
+                        trailing: ElevatedButton(
+                          onPressed: () {},
+                          child: const Text("Details"),
+                        ),
                       ),
                       ListTile(
                         title: const Text("Spyware.123"),
                         subtitle: const Text("Blocked on Mar 27"),
-                        trailing: ElevatedButton(onPressed: () {}, child: const Text("Details")),
+                        trailing: ElevatedButton(
+                          onPressed: () {},
+                          child: const Text("Details"),
+                        ),
                       ),
                     ],
                   ),
@@ -209,11 +246,19 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                   ElevatedButton.icon(
                     onPressed: _isScanning ? null : _startScan,
                     icon: const Icon(Icons.search, color: Colors.white),
-                    label: const Text("Run Quick Scan", style: TextStyle(fontSize: 18, color: Colors.white)),
+                    label: const Text(
+                      "Run Quick Scan",
+                      style: TextStyle(fontSize: 18, color: Colors.white),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: accentGreen,
-                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 40,
+                        vertical: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ],
@@ -225,97 +270,118 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     );
   }
 
-Widget _buildReportPage() {
-  return Padding(
-    padding: const EdgeInsets.all(40.0),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              "Scan Report",
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            FutureBuilder<bool>(
-              future: history.historyHasData(),
-              builder: (context, snapshot) {
-                switch (snapshot.connectionState) {
-                  case ConnectionState.waiting:
-                return Center(child: CircularProgressIndicator());
-              default:
-                if (snapshot.hasError) {
-                return Text('Error: ${snapshot.error}');
+  Widget _buildReportPage() {
+    return Padding(
+      padding: const EdgeInsets.all(40.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                "Scan Report",
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              FutureBuilder<bool>(
+                future: history.historyHasData(),
+                builder: (context, snapshot) {
+                  switch (snapshot.connectionState) {
+                    case ConnectionState.waiting:
+                      return Center(child: CircularProgressIndicator());
+                    default:
+                      if (snapshot.hasError) {
+                        return Text('Error: ${snapshot.error}');
+                      } else {
+                        if (snapshot.data!) {
+                          return ElevatedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _scanHistory.clear();
+                              });
+                              history.clearhistory();
+                            },
+                            icon: const Icon(Icons.delete, color: Colors.white),
+                            label: const Text(
+                              "Clear",
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.redAccent,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          );
+                        } else {
+                          return ElevatedButton.icon(
+                            onPressed: null,
+                            icon: const Icon(Icons.delete, color: Colors.white),
+                            label: const Text(
+                              "Clear",
+                              style: TextStyle(color: Colors.white),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.redAccent,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          );
+                        }
+                      }
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Expanded(
+            child: FutureBuilder(
+              future: history.getHistory(),
+              builder: (BuildContext context, AsyncSnapshot snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator());
+                } else if (snapshot.hasError) {
+                  return Text('Error: ${snapshot.error}');
+                } else if (snapshot.data == null || snapshot.data.isEmpty) {
+                  return Center(child: Text('History is empty'));
                 } else {
-                if (snapshot.data!) {
-                  return ElevatedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _scanHistory.clear();
-                      });
-                      history.clearhistory();
-                      },
-                    icon: const Icon(Icons.delete, color: Colors.white),
-                    label: const Text("Clear", style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  );
-                } else {
-                  return ElevatedButton.icon(
-                    onPressed: null,
-                    icon: const Icon(Icons.delete, color: Colors.white),
-                    label: const Text("Clear", style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
+                  return ListView.builder(
+                    itemCount: snapshot.data.length,
+                    itemBuilder: (context, index) {
+                      return ListTile(
+                        leading: Icon(
+                          snapshot.data?[index]['amount'] > 0
+                              ? Icons.error
+                              : Icons.check_circle,
+                          color:
+                              snapshot.data?[index]['amount'] > 0
+                                  ? Colors.red
+                                  : Colors.green,
+                        ),
+                        title: Text(
+                          'Threat detexted: ${snapshot.data?[index]['amount']}',
+                        ),
+                      );
+                    },
                   );
                 }
-              }
-          }
-        },
-      )
-          ],
-        ),
-        const SizedBox(height: 20),
-        Expanded(
-          child: 
-          FutureBuilder(
-            future: history.getHistory(),
-            builder: (BuildContext context, AsyncSnapshot snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return Center(child: CircularProgressIndicator());
-            } else if (snapshot.hasError) {
-              return Text('Error: ${snapshot.error}');
-            } else if (snapshot.data == null || snapshot.data.isEmpty) {
-              return Center(child: Text('History is empty'));
-            } else {
-              return ListView.builder(
-                itemCount: snapshot.data.length,
-                itemBuilder: (context, index) {
-                return ListTile(
-                  leading: Icon(
-                    snapshot.data?[index]['amount'] > 0 ? Icons.error : Icons.check_circle,
-                    color: snapshot.data?[index]['amount'] > 0 ? Colors.red : Colors.green,
-                    ),
-                  title: Text('Threat detexted: ${snapshot.data?[index]['amount']}'),
-                );
-                },
-              );
-            }
-            },
-          )
-        ),
-      ],
-    ),
-  );
-}
-
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildSettingsPage() {
     return Padding(
@@ -323,7 +389,10 @@ Widget _buildReportPage() {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Settings", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const Text(
+            "Settings",
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
           const SizedBox(height: 20),
           SwitchListTile(
             value: _notificationsEnabled,
@@ -384,4 +453,3 @@ Widget _buildReportPage() {
     );
   }
 }
-
