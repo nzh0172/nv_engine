@@ -44,3 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .vscode/
+
+# Ignore generated plugin files
+**/generated_plugins.cmake
+**/GeneratedPluginRegistrant.*
