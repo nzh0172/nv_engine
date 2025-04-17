@@ -1,5 +1,7 @@
 // lib/pages/home_page.dart
 
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:nv_engine/models/scan_result.dart';
 import 'package:provider/provider.dart';
@@ -7,7 +9,7 @@ import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
 import 'package:nv_engine/utils.dart';
 import 'package:nv_engine/models/mock_file.dart';
-
+import 'package:nv_engine/history_database.dart';
 
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
@@ -29,13 +31,23 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   final Color accentGreen = const Color(0xFF42A67F);
   final Color softGray = const Color(0xFFBFC0C0);
 
+  HistoryDatabase history = HistoryDatabase();
+
   Future<void> _startScan() async {
+      Random r = new Random();
+      double falseProbability = .5;
+      bool r1 = r.nextDouble() > falseProbability;
+      bool r2 = r.nextDouble() > falseProbability;
+      bool r3= r.nextDouble() > falseProbability;
+      bool r4 = r.nextDouble() > falseProbability;
+      bool r5 = r.nextDouble() > falseProbability;
+      
       List<MockFile> filesToScan = [
-        MockFile(filename: "System32.dll", infected: false),
-        MockFile(filename: "Secret_Trojan.exe", infected: true),
-        MockFile(filename: "Resume.pdf", infected: false),
-        MockFile(filename: "Downloader.mal", infected: true),
-        MockFile(filename: "vacation.jpg", infected: false),
+        MockFile(filename: "System32.dll", infected: r1),
+        MockFile(filename: "Secret_Trojan.exe", infected: r2),
+        MockFile(filename: "Resume.pdf", infected: r3),
+        MockFile(filename: "Downloader.mal", infected: r4),
+        MockFile(filename: "vacation.jpg", infected: r5),
       ];
 
       int threats = 0;
@@ -56,9 +68,10 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
           : "$threats threat${threats > 1 ? 's' : ''} detected.";
 
       final newResult = ScanResult(
-        timestamp: DateTime.now(),
-        result: result,
+        amount: threats
       );
+
+      history.insertHistory(threats);
 
       _scanHistory.add(newResult);
 
@@ -96,7 +109,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Last scanned: ${_scanHistory.isNotEmpty ? formatTimestamp(_scanHistory.last.timestamp) : 'Never'}',
+                'Last scanned: ${_scanHistory.isEmpty ? 'Just now' : 'Long ago'}',
                 style: TextStyle(fontSize: 14, color: softGray),
               ),
               const SizedBox(height: 30),
@@ -225,42 +238,78 @@ Widget _buildReportPage() {
               "Scan Report",
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
-            ElevatedButton.icon(
-              onPressed: _scanHistory.isEmpty
-                  ? null
-                  : () {
+            FutureBuilder<bool>(
+              future: history.historyHasData(),
+              builder: (context, snapshot) {
+                switch (snapshot.connectionState) {
+                  case ConnectionState.waiting:
+                return Center(child: CircularProgressIndicator());
+              default:
+                if (snapshot.hasError) {
+                return Text('Error: ${snapshot.error}');
+                } else {
+                if (snapshot.data!) {
+                  return ElevatedButton.icon(
+                    onPressed: () {
                       setState(() {
                         _scanHistory.clear();
                       });
-                    },
-              icon: const Icon(Icons.delete, color: Colors.white),
-              label: const Text("Clear", style: TextStyle(color: Colors.white)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
+                      history.clearhistory();
+                      },
+                    icon: const Icon(Icons.delete, color: Colors.white),
+                    label: const Text("Clear", style: TextStyle(color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  );
+                } else {
+                  return ElevatedButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.delete, color: Colors.white),
+                    label: const Text("Clear", style: TextStyle(color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.redAccent,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  );
+                }
+              }
+          }
+        },
+      )
           ],
         ),
         const SizedBox(height: 20),
         Expanded(
-          child: _scanHistory.isEmpty
-              ? const Center(child: Text("No scan history yet."))
-              : ListView.builder(
-                  itemCount: _scanHistory.length,
-                  itemBuilder: (context, index) {
-                    final scan = _scanHistory[index];
-                    return ListTile(
-                      leading: Icon(
-                        scan.result.contains("threat") ? Icons.error : Icons.check_circle,
-                        color: scan.result.contains("threat") ? Colors.red : Colors.green,
-                      ),
-                      title: Text(scan.result),
-                      subtitle: Text(scan.timestamp.toString()),
-                    );
-                  },
-                ),
+          child: 
+          FutureBuilder(
+            future: history.getHistory(),
+            builder: (BuildContext context, AsyncSnapshot snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return Center(child: CircularProgressIndicator());
+            } else if (snapshot.hasError) {
+              return Text('Error: ${snapshot.error}');
+            } else if (snapshot.data == null || snapshot.data.isEmpty) {
+              return Center(child: Text('History is empty'));
+            } else {
+              return ListView.builder(
+                itemCount: snapshot.data.length,
+                itemBuilder: (context, index) {
+                return ListTile(
+                  leading: Icon(
+                    snapshot.data?[index]['amount'] > 0 ? Icons.error : Icons.check_circle,
+                    color: snapshot.data?[index]['amount'] > 0 ? Colors.red : Colors.green,
+                    ),
+                  title: Text('Threat detexted: ${snapshot.data?[index]['amount']}'),
+                );
+                },
+              );
+            }
+            },
+          )
         ),
       ],
     ),
