@@ -1,9 +1,7 @@
 class ScanResult {
-  final DateTime timestamp;
-  final String result;
+  final int amount;
 
   ScanResult({
-    required this.timestamp,
-    required this.result,
+    required this.amount
   });
 }
