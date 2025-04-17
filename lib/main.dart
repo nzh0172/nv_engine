@@ -2,12 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/pages/home_page.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-void main() {
+void main() async{
+  sqfliteFfiInit();
+
+
+  databaseFactory = databaseFactoryFfi;
+
   runApp(ChangeNotifierProvider(
     create: (context) => ThemeProvider(),
     child: const AntivirusApp(),
   ));
+
 }
 
 class AntivirusApp extends StatelessWidget {
