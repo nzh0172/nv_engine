@@ -48,3 +48,15 @@ app.*.map.json
 # Ignore generated plugin files
 **/generated_plugins.cmake
 **/GeneratedPluginRegistrant.*
+
+# iOS/macOS build and workspace files
+ios/Flutter/Generated.xcconfig
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/Runner.xcworkspace/
+macos/Flutter/ephemeral/
+macos/Pods/
+ios/Flutter/Debug.xcconfig
+ios/Flutter/Release.xcconfig
+macos/Flutter/Flutter-Debug.xcconfig
+macos/Flutter/Flutter-Release.xcconfig
