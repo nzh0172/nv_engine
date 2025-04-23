@@ -1,7 +1,5 @@
 // lib/pages/home_page.dart
 
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:nv_engine/models/scan_result.dart';
 import 'package:provider/provider.dart';
@@ -79,7 +77,13 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
     final newResult = ScanResult(amount: threats);
 
-    history.insertHistory(threats);
+    final now = DateTime.now();
+    int nowm = now.month;
+    int nowd = now.day;
+    int nowh = now.hour;
+    int nowmin = now.minute;
+    
+    history.insertHistory(threats, nowm, nowd, nowh, nowmin);
 
     _scanHistory.add(newResult);
 
@@ -120,10 +124,20 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 10),
-              Text(
-                'Last scanned: ${_scanHistory.isEmpty ? 'Just now' : 'Long ago'}',
-                style: TextStyle(fontSize: 14, color: softGray),
-              ),
+              FutureBuilder(
+              future: history.getHistory(),
+              builder: (BuildContext context, AsyncSnapshot snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator());
+                } else if (snapshot.hasError) {
+                  return Text('Error: ${snapshot.error}');
+                } else if (snapshot.data == null || snapshot.data.isEmpty) {
+                  return Center(child: Text('No scan history'));
+                } else {
+                  return Text('Last scan on: ${snapshot.data?[snapshot.data!.length - 1]['month']}/${snapshot.data?[snapshot.data!.length - 1]['day']} ${snapshot.data?[snapshot.data!.length - 1]['hour']}:${snapshot.data?[snapshot.data!.length - 1]['minute'] < 10 ? '0${snapshot.data?[snapshot.data!.length - 1]['minute']}':'${snapshot.data?[snapshot.data!.length - 1]['minute']}'}');
+                }
+              },
+            ),
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _isScanning ? null : _startScan,
@@ -369,8 +383,9 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                                   : Colors.green,
                         ),
                         title: Text(
-                          'Threat detexted: ${snapshot.data?[index]['amount']}',
+                          'Threat${snapshot.data?[index]['amount'] > 1 ? 's':''} detected: ${snapshot.data?[index]['amount']}',
                         ),
+                        subtitle: Text('Scanned on: ${snapshot.data?[index]['month']}/${snapshot.data?[index]['day']} ${snapshot.data?[index]['hour']}:${snapshot.data?[index]['minute'] < 10 ? '0${snapshot.data?[index]['minute']}':'${snapshot.data?[index]['minute']}'}'),
                       );
                     },
                   );
