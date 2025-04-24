@@ -10,6 +10,8 @@ import 'package:nv_engine/models/mock_file.dart';
 
 import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
+import 'package:nv_engine/services/tflite_service.dart';
+
 
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
@@ -35,11 +37,11 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
   Future<void> _startScan() async {
     List<MockFile> filesToScan = [
-      MockFile(filename: "System32.dll", features: [8.2, 1.0, 4.0, 7.8]),
-      MockFile(filename: "Secret_Trojan.exe", features: [7.6, 1.0, 3.0, 6.9]),
-      MockFile(filename: "Resume.pdf", features: [4.2, 0.0, 0.0, 3.5]),
-      MockFile(filename: "Downloader.mal", features: [7.9, 1.0, 2.0, 7.1]),
-      MockFile(filename: "vacation.jpg", features: [5.1, 0.0, 1.0, 4.4]),
+      MockFile(filename: "System32.dll", features: [0.83, 1.0, 0.45, 0.72]),
+      MockFile(filename: "Secret_Trojan.exe", features: [0.12, 0.0, 0.67, 0.39]),
+      MockFile(filename: "Resume.pdf", features: [0.001, 0.005, 0.023, 0.01]),
+      MockFile(filename: "Downloader.mal", features: [0.41, 0.0, 0.52, 0.19]),
+      MockFile(filename: "vacation.jpg", features: [0.0061, 0.09, 0.079, 0.0161]),
     ];
 
     int threats = 0;
@@ -50,16 +52,19 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       });
 
       await Future.delayed(Duration(milliseconds: 600));
+      final score = await TFLiteService.runMalwarePrediction(file.features);
 
-      final prediction = await runMalwarePrediction(file.features);
-      file.prediction = prediction;
+      file.prediction = score;
 
-      if (prediction == 1) {
-        threats++;
-      }
+      final confidence = (file.prediction! * 100).toStringAsFixed(1);
+      final status = file.infected ? '🛑 Infected' : '✅ Clean';
+      print("- ${file.filename}: $status ($confidence% confidence)");
+
+      if (file.infected) threats++;
+
     }
 
-    final infectedFiles = filesToScan.where((f) => f.prediction == 1).toList();
+    final infectedFiles = filesToScan.where((f) => f.infected).toList();
 
     print("🛑 Infected Files:");
     if (infectedFiles.isEmpty) {
