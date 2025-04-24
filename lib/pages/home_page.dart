@@ -1,5 +1,8 @@
 // lib/pages/home_page.dart
 
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:nv_engine/models/scan_result.dart';
 import 'package:provider/provider.dart';
@@ -7,7 +10,6 @@ import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
 import 'package:nv_engine/utils.dart';
 import 'package:nv_engine/models/mock_file.dart';
-
 import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
 import 'package:nv_engine/services/tflite_service.dart';
@@ -36,12 +38,17 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   HistoryDatabase history = HistoryDatabase();
 
   Future<void> _startScan() async {
+
+   FilePickerResult? fresult = await FilePicker.platform.pickFiles();
+
+    if (fresult != null) {
     List<MockFile> filesToScan = [
       MockFile(filename: "System32.dll", features: [0.83, 1.0, 0.45, 0.72]),
       MockFile(filename: "Secret_Trojan.exe", features: [0.12, 0.0, 0.67, 0.39]),
       MockFile(filename: "Resume.pdf", features: [0.001, 0.005, 0.023, 0.01]),
       MockFile(filename: "Downloader.mal", features: [0.41, 0.0, 0.52, 0.19]),
       MockFile(filename: "vacation.jpg", features: [0.0061, 0.09, 0.079, 0.0161]),
+
     ];
 
     int threats = 0;
@@ -96,6 +103,11 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       _isScanning = false;
       _status = "Scan Complete! $result";
     });
+    } else {
+      setState(() {
+      _status = "No file choosed";
+    });
+    }
   }
 
   Widget _buildOverviewPage() {
