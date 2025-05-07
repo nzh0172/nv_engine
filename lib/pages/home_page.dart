@@ -1,19 +1,23 @@
 // lib/pages/home_page.dart
 
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:nv_engine/models/scan_result.dart';
+import 'package:path/path.dart';
 import 'package:provider/provider.dart';
 import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
 import 'package:nv_engine/utils.dart';
 import 'package:nv_engine/models/mock_file.dart';
+
 import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
 import 'package:nv_engine/services/tflite_service.dart';
-
 
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
@@ -31,56 +35,159 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   List<ScanResult> _scanHistory = [];
   static bool _darkModeEnabled = false;
 
+  double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
+  double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
+  double _scaleImports(int n) => (n / 150).clamp(0.0, 1.0);
+  double _scaleStringScore(double s) => s.clamp(0.0, 1.0);
+
   final Color primaryBlue = const Color(0xFF1F2A44);
   final Color accentGreen = const Color(0xFF42A67F);
   final Color softGray = const Color(0xFFBFC0C0);
 
   HistoryDatabase history = HistoryDatabase();
 
+  double _calcEntropy(List<int> bytes) {
+  final counts = List<int>.filled(256, 0);
+  for (var b in bytes) counts[b]++;
+  final len = bytes.length;
+  double e = 0.0;
+  for (var c in counts) {
+    if (c == 0) continue;
+    final p = c / len;
+    e -= p * (log(p) / ln2);
+  }
+  return e;                         // 0‑8
+  }
+
+  int countImportsFromPE(String path) {
+  final file = File(path);
+  if (!file.existsSync()) return 0;
+
+  final bytes = file.readAsBytesSync();
+  final data = ByteData.sublistView(bytes);
+
+  // Verify MZ header
+  if (data.getUint16(0, Endian.little) != 0x5A4D) return 0;
+
+  // PE header offset (at 0x3C)
+  final peOffset = data.getUint32(0x3C, Endian.little);
+  if (peOffset + 4 > bytes.length) return 0;
+
+  // Verify "PE\0\0"
+  if (data.getUint32(peOffset, Endian.little) != 0x00004550) return 0;
+
+  // COFF header
+  final numSections = data.getUint16(peOffset + 6, Endian.little);
+  final optHeaderSize = data.getUint16(peOffset + 20, Endian.little);
+  final optHeaderOffset = peOffset + 24;
+
+  // Optional header: DataDirectory table starts at +96 for PE32, +112 for PE32+
+  final magic = data.getUint16(optHeaderOffset, Endian.little);
+  final ddOffset = magic == 0x20B             // PE32+
+      ? optHeaderOffset + 112
+      : optHeaderOffset + 96;
+
+  // Import Table RVA & size (directory[1])
+  final importRVA  = data.getUint32(ddOffset + 8, Endian.little);
+  if (importRVA == 0) return 0; // no imports
+
+  // Locate section containing the import table
+  final sectionTable = optHeaderOffset + optHeaderSize;
+  for (int i = 0; i < numSections; i++) {
+    final sOff = sectionTable + i * 40;
+    final virtAddr = data.getUint32(sOff + 12, Endian.little);
+    final rawSize  = data.getUint32(sOff + 16, Endian.little);
+    final rawPtr   = data.getUint32(sOff + 20, Endian.little);
+
+    if (importRVA >= virtAddr && importRVA < virtAddr + rawSize) {
+      // Convert RVA to file offset
+      final importOff = rawPtr + (importRVA - virtAddr);
+      int count = 0;
+      int descOff = importOff;
+
+      // IMAGE_IMPORT_DESCRIPTOR is 20 bytes; last descriptor is all‑zeroes
+      while (descOff + 20 <= bytes.length) {
+        final origFirstThunk = data.getUint32(descOff, Endian.little);
+        final nameRVA        = data.getUint32(descOff + 12, Endian.little);
+        if (origFirstThunk == 0 && nameRVA == 0) break; // end
+        count++;
+        descOff += 20;
+      }
+      return count;
+    }
+  }
+  return 0; // import section not found
+  }
+
+  final _suspectSet = <String>{
+  'virtualalloc', 'writeprocessmemory', 'loadlibrary',
+  'getprocaddress', 'createservice', 'internetopen',
+  };
+
+  double _stringScore(List<int> bytes) {
+  final buffer = StringBuffer();
+  final strings = <String>[];
+
+  for (final b in bytes) {
+    final c = b >= 32 && b <= 126 ? String.fromCharCode(b) : '\u0000';
+    if (c != '\u0000') {
+      buffer.write(c);
+    } else if (buffer.length >= 4) {
+      strings.add(buffer.toString().toLowerCase());
+      buffer.clear();
+    } else {
+      buffer.clear();
+    }
+  }
+  // final flush
+  if (buffer.length >= 4) strings.add(buffer.toString().toLowerCase());
+
+  if (strings.isEmpty) return 0;
+  final hits = strings.where(_suspectSet.contains).length;
+  return hits / strings.length;     // 0‑1
+  }
+
   Future<void> _startScan() async {
-
-   FilePickerResult? fresult = await FilePicker.platform.pickFiles();
-
-    if (fresult != null) {
-    List<MockFile> filesToScan = [
-      MockFile(filename: "System32.dll", features: [0.83, 1.0, 0.45, 0.72]),
-      MockFile(filename: "Secret_Trojan.exe", features: [0.12, 0.0, 0.67, 0.39]),
-      MockFile(filename: "Resume.pdf", features: [0.001, 0.005, 0.023, 0.01]),
-      MockFile(filename: "Downloader.mal", features: [0.41, 0.0, 0.52, 0.19]),
-      MockFile(filename: "vacation.jpg", features: [0.0061, 0.09, 0.079, 0.0161]),
-
-    ];
 
     int threats = 0;
 
-    for (var file in filesToScan) {
-      setState(() {
-        _status = "Scanning ${file.filename}...";
-      });
+    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
+    allowMultiple: true,
+    type: FileType.any,
+    );
 
-      await Future.delayed(Duration(milliseconds: 600));
-      final score = await TFLiteService.runMalwarePrediction(file.features);
+    if (fresult == null) return;
 
-      file.prediction = score;
+    final paths = fresult.paths.whereType<String>().toList();
 
-      final confidence = (file.prediction! * 100).toStringAsFixed(1);
-      final status = file.infected ? '🛑 Infected' : '✅ Clean';
-      print("- ${file.filename}: $status ($confidence% confidence)");
+    for (final path in paths) {
+    setState(() => _status = 'Scanning ${basename(path)}…');
 
-      if (file.infected) threats++;
+    final bytes = await File(path).readAsBytes();
+    final sizeRaw     = bytes.length;
+    final entropyRaw  = _calcEntropy(bytes);
+    final importRaw   = countImportsFromPE(path);
+    final strScoreRaw = _stringScore(bytes);
 
-    }
+    final features = Float32List.fromList([
+      _scaleSize(sizeRaw),
+      _scaleEntropy(entropyRaw),
+      _scaleImports(importRaw),
+      _scaleStringScore(strScoreRaw),
+    ]);
 
-    final infectedFiles = filesToScan.where((f) => f.infected).toList();
+    print(features);
 
-    print("🛑 Infected Files:");
-    if (infectedFiles.isEmpty) {
-      print("✅ No infected files found.");
-    } else {
-      for (var file in infectedFiles) {
-        print("- ${file.filename}");
-      }
-    }
+    await Future.delayed(const Duration(milliseconds: 600));
+    final score = await TFLiteService.runMalwarePrediction(features);
+
+    final infected = score >= 0.5;               // threshold
+    final confidence = (score * 100).toStringAsFixed(1);
+    final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
+    print('- ${basename(path)}: $statusTxt ($confidence %)');
+
+    if (infected) threats++;
+  }
 
     final result =
         threats == 0
@@ -103,16 +210,11 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       _isScanning = false;
       _status = "Scan Complete! $result";
     });
-    } else {
-      setState(() {
-      _status = "No file choosed";
-    });
-    }
   }
 
   Widget _buildOverviewPage() {
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (BuildContext context, constraints) {
         double iconSize = constraints.maxHeight * 0.2;
 
         return Padding(
@@ -182,7 +284,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
   Widget _buildProtectionPage() {
     return LayoutBuilder(
-      builder: (context, constraints) {
+      builder: (BuildContext context, constraints) {
         return SingleChildScrollView(
           padding: const EdgeInsets.all(40.0),
           child: ConstrainedBox(
@@ -316,7 +418,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               ),
               FutureBuilder<bool>(
                 future: history.historyHasData(),
-                builder: (context, snapshot) {
+                builder: (BuildContext context, snapshot) {
                   switch (snapshot.connectionState) {
                     case ConnectionState.waiting:
                       return Center(child: CircularProgressIndicator());
@@ -388,7 +490,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                 } else {
                   return ListView.builder(
                     itemCount: snapshot.data.length,
-                    itemBuilder: (context, index) {
+                    itemBuilder: (BuildContext context, index) {
                       return ListTile(
                         leading: Icon(
                           snapshot.data?[index]['amount'] > 0
@@ -415,40 +517,39 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     );
   }
 
-  Widget _buildSettingsPage() {
-    return Padding(
-      padding: const EdgeInsets.all(40.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            "Settings",
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-          SwitchListTile(
-            value: _notificationsEnabled,
-            onChanged: (val) {
-              setState(() {
-                _notificationsEnabled = val;
-              });
-            },
-            title: const Text("Enable Notifications"),
-          ),
-          SwitchListTile(
-            value: _darkModeEnabled,
-            onChanged: (bool value) {
-              Provider.of<ThemeProvider>(context, listen: false).toggleTheme();
-              setState(() {
-                _darkModeEnabled = value;
-              });
-            },
-            title: const Text("Dark Mode"),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _buildSettingsPage(BuildContext context) {
+  final themeProvider = Provider.of<ThemeProvider>(context);
+
+  return Padding(
+    padding: const EdgeInsets.all(40.0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          "Settings",
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 20),
+        SwitchListTile(
+          value: _notificationsEnabled,
+          onChanged: (val) {
+            setState(() {
+              _notificationsEnabled = val;
+            });
+          },
+          title: const Text("Enable Notifications"),
+        ),
+        SwitchListTile(
+          value: themeProvider.isDarkMode,
+          onChanged: (_) {
+            themeProvider.toggleTheme();
+          },
+          title: const Text("Dark Mode"),
+        ),
+      ],
+    ),
+  );
+}
 
   Widget _buildPage() {
     switch (_selectedIndex) {
@@ -459,7 +560,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       case 2:
         return _buildReportPage();
       case 3:
-        return _buildSettingsPage();
+        return _buildSettingsPage(this.context);
       default:
         return _buildOverviewPage();
     }
