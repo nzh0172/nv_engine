@@ -19,6 +19,9 @@ import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
 import 'package:nv_engine/services/tflite_service.dart';
 
+import 'package:nv_engine/services/quarantine_service.dart';
+import 'package:nv_engine/pages/quarantine_page.dart';
+
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
 
@@ -186,7 +189,21 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
     print('- ${basename(path)}: $statusTxt ($confidence %)');
 
-    if (infected) threats++;
+       if (infected) {
+      threats++;
+      
+      // Quarantine infected files
+      final quarantineSuccess = await QuarantineService.quarantineFile(
+        filePath: path,
+        threatScore: score,
+      );
+      
+      if (quarantineSuccess) {
+        print('File quarantined: $path');
+      } else {
+        print('Failed to quarantine file: $path');
+      }
+    }
   }
 
     final result =
@@ -560,6 +577,8 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       case 2:
         return _buildReportPage();
       case 3:
+        return const QuarantinePage();
+      case 4:
         return _buildSettingsPage(this.context);
       default:
         return _buildOverviewPage();

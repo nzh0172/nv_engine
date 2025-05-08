@@ -31,7 +31,8 @@ class NavigationPanel extends StatelessWidget {
           NavItem(icon: Icons.dashboard, label: 'Overview', selected: selectedIndex == 0, onTap: () => onItemSelected(0)),
           NavItem(icon: Icons.security, label: 'Protection', selected: selectedIndex == 1, onTap: () => onItemSelected(1)),
           NavItem(icon: Icons.history, label: 'Report', selected: selectedIndex == 2, onTap: () => onItemSelected(2)),
-          NavItem(icon: Icons.settings, label: 'Settings', selected: selectedIndex == 3, onTap: () => onItemSelected(3)),
+          NavItem(icon: Icons.history, label: 'Quarantine', selected: selectedIndex == 3, onTap: () => onItemSelected(3)),
+          NavItem(icon: Icons.settings, label: 'Settings', selected: selectedIndex == 4, onTap: () => onItemSelected(4)),
         ],
       ),
     );
