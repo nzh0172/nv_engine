@@ -1,5 +1,6 @@
 // lib/pages/home_page.dart
 
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -18,6 +19,8 @@ import 'package:nv_engine/models/mock_file.dart';
 import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
 import 'package:nv_engine/services/tflite_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:watcher/watcher.dart';
 
 import 'package:nv_engine/services/quarantine_service.dart';
 import 'package:nv_engine/pages/quarantine_page.dart';
@@ -29,27 +32,51 @@ class AntivirusHomePage extends StatefulWidget {
   _AntivirusHomePageState createState() => _AntivirusHomePageState();
 }
 
-class _AntivirusHomePageState extends State<AntivirusHomePage> {
-  bool _realTimeProtectionEnabled = true;
-  bool _notificationsEnabled = true;
-  int _selectedIndex = 0;
-  String _status = "Ready to scan!";
-  bool _isScanning = false;
-  List<ScanResult> _scanHistory = [];
-  static bool _darkModeEnabled = false;
+late bool _realTimeProtectionEnabled;
 
-  double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
-  double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
-  double _scaleImports(int n) => (n / 150).clamp(0.0, 1.0);
-  double _scaleStringScore(double s) => s.clamp(0.0, 1.0);
+Future<void> getRealTimeScan() async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
 
-  final Color primaryBlue = const Color(0xFF1F2A44);
-  final Color accentGreen = const Color(0xFF42A67F);
-  final Color softGray = const Color(0xFFBFC0C0);
+  final bool? rts = prefs.getBool('realTimeScan');
 
-  HistoryDatabase history = HistoryDatabase();
+  if (rts == true) {
+    _realTimeProtectionEnabled = true;
+  } else {
+    _realTimeProtectionEnabled = false;
+  }
+}
 
-  double _calcEntropy(List<int> bytes) {
+Future<void> setRealTimeScan(bool choice) async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  await prefs.setBool('realTimeScan', choice);
+
+  _realTimeProtectionEnabled = choice;
+}
+
+typedef MenuEntry = DropdownMenuEntry<String>;
+const List<String> scheduledscan = <String>['Never', 'Daily', 'Monthly'];
+late String _initialSchedule;
+
+final List<MenuEntry> menuEntries = UnmodifiableListView<MenuEntry>(
+  scheduledscan.map<MenuEntry>(
+    (String name) => MenuEntry(value: name, label: name),
+  ),
+);
+String dropdownValue = scheduledscan.first;
+
+double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
+double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
+double _scaleImports(int n) => (n / 150).clamp(0.0, 1.0);
+double _scaleStringScore(double s) => s.clamp(0.0, 1.0);
+
+final Color primaryBlue = const Color(0xFF1F2A44);
+final Color accentGreen = const Color(0xFF42A67F);
+final Color softGray = const Color(0xFFBFC0C0);
+
+HistoryDatabase history = HistoryDatabase();
+
+double _calcEntropy(List<int> bytes) {
   final counts = List<int>.filled(256, 0);
   for (var b in bytes) counts[b]++;
   final len = bytes.length;
@@ -59,10 +86,10 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     final p = c / len;
     e -= p * (log(p) / ln2);
   }
-  return e;                         // 0‑8
-  }
+  return e; // 0‑8
+}
 
-  int countImportsFromPE(String path) {
+int countImportsFromPE(String path) {
   final file = File(path);
   if (!file.existsSync()) return 0;
 
@@ -86,12 +113,14 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
   // Optional header: DataDirectory table starts at +96 for PE32, +112 for PE32+
   final magic = data.getUint16(optHeaderOffset, Endian.little);
-  final ddOffset = magic == 0x20B             // PE32+
-      ? optHeaderOffset + 112
-      : optHeaderOffset + 96;
+  final ddOffset =
+      magic ==
+              0x20B // PE32+
+          ? optHeaderOffset + 112
+          : optHeaderOffset + 96;
 
   // Import Table RVA & size (directory[1])
-  final importRVA  = data.getUint32(ddOffset + 8, Endian.little);
+  final importRVA = data.getUint32(ddOffset + 8, Endian.little);
   if (importRVA == 0) return 0; // no imports
 
   // Locate section containing the import table
@@ -99,8 +128,8 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   for (int i = 0; i < numSections; i++) {
     final sOff = sectionTable + i * 40;
     final virtAddr = data.getUint32(sOff + 12, Endian.little);
-    final rawSize  = data.getUint32(sOff + 16, Endian.little);
-    final rawPtr   = data.getUint32(sOff + 20, Endian.little);
+    final rawSize = data.getUint32(sOff + 16, Endian.little);
+    final rawPtr = data.getUint32(sOff + 20, Endian.little);
 
     if (importRVA >= virtAddr && importRVA < virtAddr + rawSize) {
       // Convert RVA to file offset
@@ -111,7 +140,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       // IMAGE_IMPORT_DESCRIPTOR is 20 bytes; last descriptor is all‑zeroes
       while (descOff + 20 <= bytes.length) {
         final origFirstThunk = data.getUint32(descOff, Endian.little);
-        final nameRVA        = data.getUint32(descOff + 12, Endian.little);
+        final nameRVA = data.getUint32(descOff + 12, Endian.little);
         if (origFirstThunk == 0 && nameRVA == 0) break; // end
         count++;
         descOff += 20;
@@ -120,14 +149,18 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     }
   }
   return 0; // import section not found
-  }
+}
 
-  final _suspectSet = <String>{
-  'virtualalloc', 'writeprocessmemory', 'loadlibrary',
-  'getprocaddress', 'createservice', 'internetopen',
-  };
+final _suspectSet = <String>{
+  'virtualalloc',
+  'writeprocessmemory',
+  'loadlibrary',
+  'getprocaddress',
+  'createservice',
+  'internetopen',
+};
 
-  double _stringScore(List<int> bytes) {
+double _stringScore(List<int> bytes) {
   final buffer = StringBuffer();
   final strings = <String>[];
 
@@ -147,29 +180,80 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
   if (strings.isEmpty) return 0;
   final hits = strings.where(_suspectSet.contains).length;
-  return hits / strings.length;     // 0‑1
+  return hits / strings.length; // 0‑1
+}
+
+Future<void> getSchedule() async {
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  final int? schedule = prefs.getInt('schedule');
+
+  if (schedule == 2) {
+    _initialSchedule = 'Daily';
+  } else if (schedule == 3) {
+    _initialSchedule = 'Monthly';
+  } else {
+    _initialSchedule = 'Never';
+  }
+}
+
+void startSafeSystemWatcher() {
+  //Fixed hardcoded path
+  final String homeDir =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
+
+  final List<String> roots =
+      Platform.isWindows
+          ? ['$homeDir\\Downloads'] // This works for any Windows user
+          : ['$homeDir/Downloads']; // macOS/Linux Downloads folder
+
+  for (final root in roots) {
+    _attachWatchersRecursively(Directory(root));
+  }
+}
+
+void _attachWatchersRecursively(Directory dir) {
+  try {
+    // Try to attach a watcher to this directory
+    final watcher = DirectoryWatcher(
+      dir.path,
+      pollingDelay: Duration(seconds: 5),
+    );
+    print('✅ Watching: ${dir.path}');
+
+    watcher.events.listen((event) {
+      if (_realTimeProtectionEnabled == true) {
+        if (event.type == ChangeType.ADD || event.type == ChangeType.MODIFY) {
+          print('📂 File changed: ${event.path}');
+          _realTimeScan(File(event.path)); // Your existing scan logic
+        }
+      }
+    });
+  } catch (e) {
+    print('⛔ Skipped inaccessible directory: ${dir.path}\nReason: $e');
+    return;
   }
 
-  Future<void> _startScan() async {
+  // Recursively attempt to watch subdirectories
+  try {
+    final children = dir.listSync();
+    for (final entity in children) {
+      if (entity is Directory) {
+        _attachWatchersRecursively(entity);
+      }
+    }
+  } catch (e) {
+    print('⛔ Failed to read children of ${dir.path}\nReason: $e');
+  }
+}
 
-    int threats = 0;
-
-    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
-    allowMultiple: true,
-    type: FileType.any,
-    );
-
-    if (fresult == null) return;
-
-    final paths = fresult.paths.whereType<String>().toList();
-
-    for (final path in paths) {
-    setState(() => _status = 'Scanning ${basename(path)}…');
-
-    final bytes = await File(path).readAsBytes();
-    final sizeRaw     = bytes.length;
-    final entropyRaw  = _calcEntropy(bytes);
-    final importRaw   = countImportsFromPE(path);
+Future<void> _realTimeScan(File file) async {
+  try {
+    final path = file.path;
+    final bytes = await file.readAsBytes();
+    final sizeRaw = bytes.length;
+    final entropyRaw = _calcEntropy(bytes);
+    final importRaw = countImportsFromPE(path);
     final strScoreRaw = _stringScore(bytes);
 
     final features = Float32List.fromList([
@@ -179,32 +263,87 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       _scaleStringScore(strScoreRaw),
     ]);
 
-    print(features);
-
-    await Future.delayed(const Duration(milliseconds: 600));
     final score = await TFLiteService.runMalwarePrediction(features);
-
-    final infected = score >= 0.5;               // threshold
+    final infected = score >= 0.5;
     final confidence = (score * 100).toStringAsFixed(1);
-    final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
-    print('- ${basename(path)}: $statusTxt ($confidence %)');
 
-       if (infected) {
-      threats++;
-      
-      // Quarantine infected files
-      final quarantineSuccess = await QuarantineService.quarantineFile(
-        filePath: path,
-        threatScore: score,
-      );
-      
-      if (quarantineSuccess) {
-        print('File quarantined: $path');
-      } else {
-        print('Failed to quarantine file: $path');
+    print(
+      '🛠️ Scanned ${basename(path)}: ${infected ? '🛑 Infected' : '✅ Clean'} ($confidence%)',
+    );
+
+    // optionally log to history
+    if (infected) {
+      final now = DateTime.now();
+      history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+    }
+  } catch (e) {
+    print('Error scanning file ${file.path}: $e');
+  }
+}
+
+class _AntivirusHomePageState extends State<AntivirusHomePage> {
+  bool _notificationsEnabled = true;
+  int _selectedIndex = 0;
+  String _status = "Ready to scan!";
+  bool _isScanning = false;
+  List<ScanResult> _scanHistory = [];
+  static bool _darkModeEnabled = false;
+
+  Future<void> _startScan() async {
+    int threats = 0;
+
+    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.any,
+    );
+
+    if (fresult == null) return;
+
+    final paths = fresult.paths.whereType<String>().toList();
+
+    for (final path in paths) {
+      setState(() => _status = 'Scanning ${basename(path)}…');
+
+      final bytes = await File(path).readAsBytes();
+      final sizeRaw = bytes.length;
+      final entropyRaw = _calcEntropy(bytes);
+      final importRaw = countImportsFromPE(path);
+      final strScoreRaw = _stringScore(bytes);
+
+      final features = Float32List.fromList([
+        _scaleSize(sizeRaw),
+        _scaleEntropy(entropyRaw),
+        _scaleImports(importRaw),
+        _scaleStringScore(strScoreRaw),
+      ]);
+
+      print(features);
+
+      await Future.delayed(const Duration(milliseconds: 600));
+      final score = await TFLiteService.runMalwarePrediction(features);
+
+      final infected = score >= 0.5; // threshold
+      print(score);
+      final confidence = (score * 100).toStringAsFixed(1);
+      final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
+      print('- ${basename(path)}: $statusTxt ($confidence %)');
+
+      if (infected) {
+        threats++;
+
+        // Quarantine infected files
+        final quarantineSuccess = await QuarantineService.quarantineFile(
+          filePath: path,
+          threatScore: score,
+        );
+
+        if (quarantineSuccess) {
+          print('File quarantined: $path');
+        } else {
+          print('Failed to quarantine file: $path');
+        }
       }
     }
-  }
 
     final result =
         threats == 0
@@ -218,7 +357,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     int nowd = now.day;
     int nowh = now.hour;
     int nowmin = now.minute;
-    
+
     history.insertHistory(threats, nowm, nowd, nowh, nowmin);
 
     _scanHistory.add(newResult);
@@ -261,19 +400,21 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               ),
               const SizedBox(height: 10),
               FutureBuilder(
-              future: history.getHistory(),
-              builder: (BuildContext context, AsyncSnapshot snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(child: CircularProgressIndicator());
-                } else if (snapshot.hasError) {
-                  return Text('Error: ${snapshot.error}');
-                } else if (snapshot.data == null || snapshot.data.isEmpty) {
-                  return Center(child: Text('No scan history'));
-                } else {
-                  return Text('Last scan on: ${snapshot.data?[snapshot.data!.length - 1]['month']}/${snapshot.data?[snapshot.data!.length - 1]['day']} ${snapshot.data?[snapshot.data!.length - 1]['hour']}:${snapshot.data?[snapshot.data!.length - 1]['minute'] < 10 ? '0${snapshot.data?[snapshot.data!.length - 1]['minute']}':'${snapshot.data?[snapshot.data!.length - 1]['minute']}'}');
-                }
-              },
-            ),
+                future: history.getHistory(),
+                builder: (BuildContext context, AsyncSnapshot snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return Center(child: CircularProgressIndicator());
+                  } else if (snapshot.hasError) {
+                    return Text('Error: ${snapshot.error}');
+                  } else if (snapshot.data == null || snapshot.data.isEmpty) {
+                    return Center(child: Text('No scan history'));
+                  } else {
+                    return Text(
+                      'Last scan on: ${snapshot.data?[snapshot.data!.length - 1]['month']}/${snapshot.data?[snapshot.data!.length - 1]['day']} ${snapshot.data?[snapshot.data!.length - 1]['hour']}:${snapshot.data?[snapshot.data!.length - 1]['minute'] < 10 ? '0${snapshot.data?[snapshot.data!.length - 1]['minute']}' : '${snapshot.data?[snapshot.data!.length - 1]['minute']}'}',
+                    );
+                  }
+                },
+              ),
               const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _isScanning ? null : _startScan,
@@ -300,6 +441,12 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   }
 
   Widget _buildProtectionPage() {
+    Future<void> changeSchedule(int choice) async {
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+      await prefs.setInt('schedule', choice);
+    }
+
     return LayoutBuilder(
       builder: (BuildContext context, constraints) {
         return SingleChildScrollView(
@@ -344,12 +491,33 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
                   SwitchListTile(
                     value: _realTimeProtectionEnabled,
-                    onChanged: (val) {
+                    onChanged: (choice) {
                       setState(() {
-                        _realTimeProtectionEnabled = val;
+                        setRealTimeScan(choice);
                       });
                     },
                     title: const Text("Enable Real-Time Protection"),
+                  ),
+
+                  ListTile(
+                    title: Text("Scheduled Scan"), // Text widget for the title
+                    trailing: DropdownMenu(
+                      requestFocusOnTap: false,
+                      initialSelection: _initialSchedule,
+                      onSelected: (String? value) {
+                        if (value == 'Never') {
+                          changeSchedule(1);
+                        } else if (value == 'Daily') {
+                          changeSchedule(2);
+                        } else if (value == 'Monthly') {
+                          changeSchedule(3);
+                        }
+                        setState(() {
+                          dropdownValue = value!;
+                        });
+                      },
+                      dropdownMenuEntries: menuEntries,
+                    ),
                   ),
 
                   ListTile(
@@ -519,9 +687,11 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                                   : Colors.green,
                         ),
                         title: Text(
-                          'Threat${snapshot.data?[index]['amount'] > 1 ? 's':''} detected: ${snapshot.data?[index]['amount']}',
+                          'Threat${snapshot.data?[index]['amount'] > 1 ? 's' : ''} detected: ${snapshot.data?[index]['amount']}',
                         ),
-                        subtitle: Text('Scanned on: ${snapshot.data?[index]['month']}/${snapshot.data?[index]['day']} ${snapshot.data?[index]['hour']}:${snapshot.data?[index]['minute'] < 10 ? '0${snapshot.data?[index]['minute']}':'${snapshot.data?[index]['minute']}'}'),
+                        subtitle: Text(
+                          'Scanned on: ${snapshot.data?[index]['month']}/${snapshot.data?[index]['day']} ${snapshot.data?[index]['hour']}:${snapshot.data?[index]['minute'] < 10 ? '0${snapshot.data?[index]['minute']}' : '${snapshot.data?[index]['minute']}'}',
+                        ),
                       );
                     },
                   );
@@ -535,38 +705,38 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   }
 
   Widget _buildSettingsPage(BuildContext context) {
-  final themeProvider = Provider.of<ThemeProvider>(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
 
-  return Padding(
-    padding: const EdgeInsets.all(40.0),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Settings",
-          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 20),
-        SwitchListTile(
-          value: _notificationsEnabled,
-          onChanged: (val) {
-            setState(() {
-              _notificationsEnabled = val;
-            });
-          },
-          title: const Text("Enable Notifications"),
-        ),
-        SwitchListTile(
-          value: themeProvider.isDarkMode,
-          onChanged: (_) {
-            themeProvider.toggleTheme();
-          },
-          title: const Text("Dark Mode"),
-        ),
-      ],
-    ),
-  );
-}
+    return Padding(
+      padding: const EdgeInsets.all(40.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Settings",
+            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 20),
+          SwitchListTile(
+            value: _notificationsEnabled,
+            onChanged: (val) {
+              setState(() {
+                _notificationsEnabled = val;
+              });
+            },
+            title: const Text("Enable Notifications"),
+          ),
+          SwitchListTile(
+            value: themeProvider.isDarkMode,
+            onChanged: (_) {
+              themeProvider.toggleTheme();
+            },
+            title: const Text("Dark Mode"),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildPage() {
     switch (_selectedIndex) {

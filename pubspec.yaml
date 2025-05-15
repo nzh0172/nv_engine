@@ -28,6 +28,7 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
+  watcher: ^1.0.0
   shared_preferences: ^2.2.0
   sqflite_common_ffi: any
   flutter:
