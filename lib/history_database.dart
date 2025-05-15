@@ -57,6 +57,18 @@ class HistoryDatabase {
     return result[0].values.first;
   }
 
+  Future<int?> getMonth() async{
+    final db = await openMyDatabase();
+    final List<Map<String, dynamic>> result = await db.rawQuery('SELECT month FROM history ORDER BY id DESC LIMIT 1');
+    return result.first['month'];
+  }
+
+  Future<int?> getDay() async{
+    final db = await openMyDatabase();
+    final List<Map<String, dynamic>> result = await db.rawQuery('SELECT day FROM history ORDER BY id DESC LIMIT 1');
+    return result.first['day'];
+  }
+
   Future<List<Map<String,dynamic>>> getHistory() async {
     final db = await openMyDatabase();
 
