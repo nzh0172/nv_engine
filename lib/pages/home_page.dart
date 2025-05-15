@@ -1,5 +1,6 @@
 // lib/pages/home_page.dart
 
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -18,6 +19,8 @@ import 'package:nv_engine/models/mock_file.dart';
 import 'package:nv_engine/history_database.dart';
 import 'package:nv_engine/ai_service.dart';
 import 'package:nv_engine/services/tflite_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:watcher/watcher.dart';
 
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
@@ -26,14 +29,43 @@ class AntivirusHomePage extends StatefulWidget {
   _AntivirusHomePageState createState() => _AntivirusHomePageState();
 }
 
-class _AntivirusHomePageState extends State<AntivirusHomePage> {
-  bool _realTimeProtectionEnabled = true;
-  bool _notificationsEnabled = true;
-  int _selectedIndex = 0;
-  String _status = "Ready to scan!";
-  bool _isScanning = false;
-  List<ScanResult> _scanHistory = [];
-  static bool _darkModeEnabled = false;
+late bool _realTimeProtectionEnabled;
+
+Future<void> getRealTimeScan() async{
+
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  final bool? rts = prefs.getBool('realTimeScan');
+
+  if(rts == true){
+
+    _realTimeProtectionEnabled = true;
+
+  } else {
+
+    _realTimeProtectionEnabled = false;
+
+  }
+
+}
+
+Future<void> setRealTimeScan(bool choice) async{
+
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  await prefs.setBool('realTimeScan', choice);
+
+  _realTimeProtectionEnabled = choice;
+}
+
+typedef MenuEntry = DropdownMenuEntry<String>;
+const List<String> scheduledscan = <String>['Never', 'Daily', 'Monthly'];
+late String _initialSchedule;
+
+final List<MenuEntry> menuEntries = UnmodifiableListView<MenuEntry>(
+    scheduledscan.map<MenuEntry>((String name) => MenuEntry(value: name, label: name)),
+  );
+  String dropdownValue = scheduledscan.first;
 
   double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
   double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
@@ -147,26 +179,77 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   return hits / strings.length;     // 0‑1
   }
 
-  Future<void> _startScan() async {
+Future<void> getSchedule() async{
 
-    int threats = 0;
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
 
-    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
-    allowMultiple: true,
-    type: FileType.any,
-    );
+  final int? schedule = prefs.getInt('schedule');
 
-    if (fresult == null) return;
+  if(schedule == 2){
 
-    final paths = fresult.paths.whereType<String>().toList();
+    _initialSchedule = 'Daily';
 
-    for (final path in paths) {
-    setState(() => _status = 'Scanning ${basename(path)}…');
+  }else if(schedule == 3){
 
-    final bytes = await File(path).readAsBytes();
-    final sizeRaw     = bytes.length;
-    final entropyRaw  = _calcEntropy(bytes);
-    final importRaw   = countImportsFromPE(path);
+    _initialSchedule = 'Monthly';
+
+  } else {
+
+    _initialSchedule = 'Never';
+
+  }
+
+}
+
+void startSafeSystemWatcher() {
+  final List<String> roots = Platform.isWindows
+      ? ['C:\\Users\\Naqib\\Downloads'] // Add others if needed
+      : ['/Users'];
+
+  for (final root in roots) {
+    _attachWatchersRecursively(Directory(root));
+  }
+}
+
+void _attachWatchersRecursively(Directory dir) {
+  try {
+    // Try to attach a watcher to this directory
+    final watcher = DirectoryWatcher(dir.path, pollingDelay: Duration(seconds: 5));
+    print('✅ Watching: ${dir.path}');
+
+    watcher.events.listen((event) {
+      if(_realTimeProtectionEnabled == true){
+        if (event.type == ChangeType.ADD || event.type == ChangeType.MODIFY) {
+        print('📂 File changed: ${event.path}');
+        _realTimeScan(File(event.path)); // Your existing scan logic
+      }
+      }
+    });
+  } catch (e) {
+    print('⛔ Skipped inaccessible directory: ${dir.path}\nReason: $e');
+    return;
+  }
+
+  // Recursively attempt to watch subdirectories
+  try {
+    final children = dir.listSync();
+    for (final entity in children) {
+      if (entity is Directory) {
+        _attachWatchersRecursively(entity);
+      }
+    }
+  } catch (e) {
+    print('⛔ Failed to read children of ${dir.path}\nReason: $e');
+  }
+}
+
+Future<void> _realTimeScan(File file) async {
+  try {
+    final path = file.path;
+    final bytes = await file.readAsBytes();
+    final sizeRaw = bytes.length;
+    final entropyRaw = _calcEntropy(bytes);
+    final importRaw = countImportsFromPE(path);
     final strScoreRaw = _stringScore(bytes);
 
     final features = Float32List.fromList([
@@ -176,18 +259,74 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       _scaleStringScore(strScoreRaw),
     ]);
 
-    print(features);
-
-    await Future.delayed(const Duration(milliseconds: 600));
     final score = await TFLiteService.runMalwarePrediction(features);
-
-    final infected = score >= 0.5;               // threshold
+    final infected = score >= 0.5;
     final confidence = (score * 100).toStringAsFixed(1);
-    final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
-    print('- ${basename(path)}: $statusTxt ($confidence %)');
 
-    if (infected) threats++;
+    print('🛠️ Scanned ${basename(path)}: ${infected ? '🛑 Infected' : '✅ Clean'} ($confidence%)');
+
+    // optionally log to history
+    if (infected) {
+      final now = DateTime.now();
+      history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+    }
+
+  } catch (e) {
+    print('Error scanning file ${file.path}: $e');
   }
+}
+
+
+class _AntivirusHomePageState extends State<AntivirusHomePage> {
+  bool _notificationsEnabled = true;
+  int _selectedIndex = 0;
+  String _status = "Ready to scan!";
+  bool _isScanning = false;
+  List<ScanResult> _scanHistory = [];
+  static bool _darkModeEnabled = false;
+
+  Future<void> _startScan() async {
+
+    int threats = 0;
+
+    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: FileType.any,
+    );
+
+    if (fresult == null) return;
+
+    final paths = fresult.paths.whereType<String>().toList();
+
+    for (final path in paths) {
+      setState(() => _status = 'Scanning ${basename(path)}…');
+
+      final bytes = await File(path).readAsBytes();
+      final sizeRaw     = bytes.length;
+      final entropyRaw  = _calcEntropy(bytes);
+      final importRaw   = countImportsFromPE(path);
+      final strScoreRaw = _stringScore(bytes);
+
+      final features = Float32List.fromList([
+        _scaleSize(sizeRaw),
+        _scaleEntropy(entropyRaw),
+        _scaleImports(importRaw),
+        _scaleStringScore(strScoreRaw),
+      ]);
+
+      print(features);
+
+      await Future.delayed(const Duration(milliseconds: 600));
+      final score = await TFLiteService.runMalwarePrediction(features);
+
+      final infected = score >= 0.5;               // threshold
+      print(score);
+      final confidence = (score * 100).toStringAsFixed(1);
+      final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
+      print('- ${basename(path)}: $statusTxt ($confidence %)');
+
+      if (infected) threats++;
+    }
 
     final result =
         threats == 0
@@ -210,6 +349,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       _isScanning = false;
       _status = "Scan Complete! $result";
     });
+
   }
 
   Widget _buildOverviewPage() {
@@ -283,6 +423,14 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   }
 
   Widget _buildProtectionPage() {
+
+    Future<void> changeSchedule(int choice) async{
+
+      final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+      await prefs.setInt('schedule', choice);
+    }
+
     return LayoutBuilder(
       builder: (BuildContext context, constraints) {
         return SingleChildScrollView(
@@ -327,12 +475,33 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
                   SwitchListTile(
                     value: _realTimeProtectionEnabled,
-                    onChanged: (val) {
+                    onChanged: (choice) {
                       setState(() {
-                        _realTimeProtectionEnabled = val;
+                        setRealTimeScan(choice);
                       });
                     },
                     title: const Text("Enable Real-Time Protection"),
+                  ),
+
+                  ListTile(
+                    title: Text("Scheduled Scan"), // Text widget for the title
+                    trailing: DropdownMenu(
+                        requestFocusOnTap: false,
+                        initialSelection: _initialSchedule,
+                        onSelected: (String? value) {
+                          if(value == 'Never'){
+                            changeSchedule(1);
+                          } else if(value == 'Daily'){
+                            changeSchedule(2);
+                          } else if(value == 'Monthly'){
+                            changeSchedule(3);
+                          }
+                        setState(() {
+                          dropdownValue = value!;
+                        });
+                      },
+                      dropdownMenuEntries: menuEntries,
+                    ),
                   ),
 
                   ListTile(
