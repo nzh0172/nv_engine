@@ -10,8 +10,10 @@ import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/pages/home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:nv_engine/services/tflite_service.dart';  // Add this import
+import 'package:nv_engine/services/tflite_service.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart';
 
 double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
 double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
@@ -126,6 +128,24 @@ void main() async {
 
   databaseFactory = databaseFactoryFfi;
 
+  await windowManager.ensureInitialized();
+  await windowManager.setPreventClose(true);
+  windowManager.addListener(AppWindowListener());
+
+  await trayManager.setIcon(
+  Platform.isWindows
+    ? 'assets/icon.ico'
+    : 'assets/icon.png',
+  );
+  await trayManager.setToolTip('NV Engine');
+  await trayManager.setContextMenu(Menu(items: [
+  MenuItem(key: 'show', label: 'Show'),
+  MenuItem(key: 'exit', label: 'Exit'),
+  ]));
+
+
+  trayManager.addListener(MyTrayListener());
+
   // Initialize TFLite model
   try {
     final data = await rootBundle.load('assets/model.tflite');
@@ -150,6 +170,40 @@ void main() async {
     ),
   );
 }
+
+class AppWindowListener extends WindowListener {
+  @override
+  void onWindowClose() async {
+    await windowManager.hide(); // hide instead of close
+  }
+}
+
+
+class MyTrayListener extends TrayListener {
+  @override
+  void onTrayIconMouseDown() async {
+    await windowManager.show();
+    await windowManager.focus();
+  }
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) async {
+    switch (menuItem.key) {
+      case 'show':
+        await windowManager.show();
+        await windowManager.focus();
+        break;
+      case 'exit':
+        await windowManager.setPreventClose(false);
+        await windowManager.close();
+        break;
+    }
+  }
+  @override
+  void onTrayIconRightMouseDown() async {
+    await trayManager.popUpContextMenu();
+  }
+}
+
 
 class AntivirusApp extends StatelessWidget {
   const AntivirusApp({super.key});
