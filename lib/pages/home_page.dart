@@ -249,12 +249,21 @@ void _attachWatchersRecursively(Directory dir) {
 
 Future<void> _realTimeScan(File file) async {
   try {
+
+
     final path = file.path;
     final bytes = await file.readAsBytes();
     final sizeRaw = bytes.length;
     final entropyRaw = _calcEntropy(bytes);
     final importRaw = countImportsFromPE(path);
     final strScoreRaw = _stringScore(bytes);
+
+    // Check file against whitelist first
+    final hash = await QuarantineService.computeFileHash(file);
+    if (QuarantineService.isWhitelisted(hash)) {
+      print('✅ File is whitelisted. Skipping: $path');
+      return;
+    }
 
     final features = Float32List.fromList([
       _scaleSize(sizeRaw),
