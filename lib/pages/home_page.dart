@@ -275,7 +275,29 @@ Future<void> _realTimeScan(File file) async {
     if (infected) {
       final now = DateTime.now();
       history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+
+      final quarantineSuccess = await QuarantineService.quarantineFile(
+        filePath: path,
+        threatScore: score,
+      );
+
+      if (quarantineSuccess) {
+         print('File quarantined: $path');
+      } else {
+        print('Failed to quarantine file: $path');
+      }
     }
+    final quarantineSuccess = await QuarantineService.quarantineFile(
+          filePath: path,
+          threatScore: score,
+        );
+
+        if (quarantineSuccess) {
+          print('File quarantined: $path');
+        } else {
+          print('Failed to quarantine file: $path');
+        }
+        
   } catch (e) {
     print('Error scanning file ${file.path}: $e');
   }
