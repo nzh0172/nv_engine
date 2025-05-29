@@ -25,6 +25,11 @@ import 'package:watcher/watcher.dart';
 import 'package:nv_engine/services/quarantine_service.dart';
 import 'package:nv_engine/pages/quarantine_page.dart';
 
+import 'package:flutter_python_bridge/flutter_python_bridge.dart';
+import 'package:path_provider/path_provider.dart';
+
+final pythonBridge = PythonBridge();
+
 class AntivirusHomePage extends StatefulWidget {
   const AntivirusHomePage({super.key});
 
@@ -65,123 +70,11 @@ final List<MenuEntry> menuEntries = UnmodifiableListView<MenuEntry>(
 );
 String dropdownValue = scheduledscan.first;
 
-double _scaleSize(int bytes) => (bytes / 10000000).clamp(0.0, 1.0);
-double _scaleEntropy(double e) => (e / 8).clamp(0.0, 1.0);
-double _scaleImports(int n) => (n / 150).clamp(0.0, 1.0);
-double _scaleStringScore(double s) => s.clamp(0.0, 1.0);
-
 final Color primaryBlue = const Color(0xFF1F2A44);
 final Color accentGreen = const Color(0xFF42A67F);
 final Color softGray = const Color(0xFFBFC0C0);
 
 HistoryDatabase history = HistoryDatabase();
-
-double _calcEntropy(List<int> bytes) {
-  final counts = List<int>.filled(256, 0);
-  for (var b in bytes) counts[b]++;
-  final len = bytes.length;
-  double e = 0.0;
-  for (var c in counts) {
-    if (c == 0) continue;
-    final p = c / len;
-    e -= p * (log(p) / ln2);
-  }
-  return e; // 0‑8
-}
-
-int countImportsFromPE(String path) {
-  final file = File(path);
-  if (!file.existsSync()) return 0;
-
-  final bytes = file.readAsBytesSync();
-  final data = ByteData.sublistView(bytes);
-
-  // Verify MZ header
-  if (data.getUint16(0, Endian.little) != 0x5A4D) return 0;
-
-  // PE header offset (at 0x3C)
-  final peOffset = data.getUint32(0x3C, Endian.little);
-  if (peOffset + 4 > bytes.length) return 0;
-
-  // Verify "PE\0\0"
-  if (data.getUint32(peOffset, Endian.little) != 0x00004550) return 0;
-
-  // COFF header
-  final numSections = data.getUint16(peOffset + 6, Endian.little);
-  final optHeaderSize = data.getUint16(peOffset + 20, Endian.little);
-  final optHeaderOffset = peOffset + 24;
-
-  // Optional header: DataDirectory table starts at +96 for PE32, +112 for PE32+
-  final magic = data.getUint16(optHeaderOffset, Endian.little);
-  final ddOffset =
-      magic ==
-              0x20B // PE32+
-          ? optHeaderOffset + 112
-          : optHeaderOffset + 96;
-
-  // Import Table RVA & size (directory[1])
-  final importRVA = data.getUint32(ddOffset + 8, Endian.little);
-  if (importRVA == 0) return 0; // no imports
-
-  // Locate section containing the import table
-  final sectionTable = optHeaderOffset + optHeaderSize;
-  for (int i = 0; i < numSections; i++) {
-    final sOff = sectionTable + i * 40;
-    final virtAddr = data.getUint32(sOff + 12, Endian.little);
-    final rawSize = data.getUint32(sOff + 16, Endian.little);
-    final rawPtr = data.getUint32(sOff + 20, Endian.little);
-
-    if (importRVA >= virtAddr && importRVA < virtAddr + rawSize) {
-      // Convert RVA to file offset
-      final importOff = rawPtr + (importRVA - virtAddr);
-      int count = 0;
-      int descOff = importOff;
-
-      // IMAGE_IMPORT_DESCRIPTOR is 20 bytes; last descriptor is all‑zeroes
-      while (descOff + 20 <= bytes.length) {
-        final origFirstThunk = data.getUint32(descOff, Endian.little);
-        final nameRVA = data.getUint32(descOff + 12, Endian.little);
-        if (origFirstThunk == 0 && nameRVA == 0) break; // end
-        count++;
-        descOff += 20;
-      }
-      return count;
-    }
-  }
-  return 0; // import section not found
-}
-
-final _suspectSet = <String>{
-  'virtualalloc',
-  'writeprocessmemory',
-  'loadlibrary',
-  'getprocaddress',
-  'createservice',
-  'internetopen',
-};
-
-double _stringScore(List<int> bytes) {
-  final buffer = StringBuffer();
-  final strings = <String>[];
-
-  for (final b in bytes) {
-    final c = b >= 32 && b <= 126 ? String.fromCharCode(b) : '\u0000';
-    if (c != '\u0000') {
-      buffer.write(c);
-    } else if (buffer.length >= 4) {
-      strings.add(buffer.toString().toLowerCase());
-      buffer.clear();
-    } else {
-      buffer.clear();
-    }
-  }
-  // final flush
-  if (buffer.length >= 4) strings.add(buffer.toString().toLowerCase());
-
-  if (strings.isEmpty) return 0;
-  final hits = strings.where(_suspectSet.contains).length;
-  return hits / strings.length; // 0‑1
-}
 
 Future<void> getSchedule() async {
   final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -248,69 +141,82 @@ void _attachWatchersRecursively(Directory dir) {
 }
 
 Future<void> _realTimeScan(File file) async {
-  try {
-
-
+    
+    double score = 0;
+    bool infected = false;
+    int count = 1;
     final path = file.path;
-    final bytes = await file.readAsBytes();
-    final sizeRaw = bytes.length;
-    final entropyRaw = _calcEntropy(bytes);
-    final importRaw = countImportsFromPE(path);
-    final strScoreRaw = _stringScore(bytes);
 
-    // Check file against whitelist first
     final hash = await QuarantineService.computeFileHash(file);
     if (QuarantineService.isWhitelisted(hash)) {
       print('✅ File is whitelisted. Skipping: $path');
       return;
     }
 
-    final features = Float32List.fromList([
-      _scaleSize(sizeRaw),
-      _scaleEntropy(entropyRaw),
-      _scaleImports(importRaw),
-      _scaleStringScore(strScoreRaw),
-    ]);
+    final documentdirectory = await getApplicationDocumentsDirectory();
+    final resultdirectory = '${documentdirectory.path}\\rtsfile.txt';
+    String resultdirectorys = resultdirectory.toString();
+    final resultdirectoryf = File(resultdirectorys);
 
-    final score = await TFLiteService.runMalwarePrediction(features);
-    final infected = score >= 0.5;
-    final confidence = (score * 100).toStringAsFixed(1);
+    resultdirectoryf.writeAsString(path);
 
-    print(
-      '🛠️ Scanned ${basename(path)}: ${infected ? '🛑 Infected' : '✅ Clean'} ($confidence%)',
-    );
+    final resultp = await pythonBridge.runScript('assets/detector/realtime.py');
 
-    // optionally log to history
-    if (infected) {
-      final now = DateTime.now();
-      history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+    if(resultp.success){
+      print(resultp);
 
-      final quarantineSuccess = await QuarantineService.quarantineFile(
-        filePath: path,
-        threatScore: score,
-      );
+      final documentdirectory = await getApplicationDocumentsDirectory();
+      final resultdirectory = '${documentdirectory.path}\\resultrts.txt';
+      String resultdirectorys = resultdirectory.toString();
+      final resultdirectoryf = File(resultdirectorys);
 
-      if (quarantineSuccess) {
-         print('File quarantined: $path');
-      } else {
-        print('Failed to quarantine file: $path');
-      }
-    }
-    final quarantineSuccess = await QuarantineService.quarantineFile(
-          filePath: path,
-          threatScore: score,
-        );
+      try {
+        final lines = await resultdirectoryf.readAsLines();
 
-        if (quarantineSuccess) {
-          print('File quarantined: $path');
-        } else {
-          print('Failed to quarantine file: $path');
+        // Do something with each line
+        for (final line in lines) {
+          switch(count){
+            case 1:
+              print('Line: $line');
+              score = double.parse(line);
+              count++;
+              break;
+          }
+        }
+
+        print(path);
+        print(score);
+
+        if(score >= 0.8){
+
+        infected = true;
+
+        }
+
+        if (infected) {
+
+          if (infected) {
+            final now = DateTime.now();
+            history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+
+            final quarantineSuccess = await QuarantineService.quarantineFile(
+              filePath: path,
+              threatScore: score,
+            );
+
+          if (quarantineSuccess) {
+            print('File quarantined: $path');
+          } else {
+            print('Failed to quarantine file: $path');
+          }
+          }
         }
         
-  } catch (e) {
-    print('Error scanning file ${file.path}: $e');
+    } catch (e) {
+      print('Error scanning file ${file.path}: $e');
+    }
   }
-}
+  }
 
 class _AntivirusHomePageState extends State<AntivirusHomePage> {
   bool _notificationsEnabled = true;
@@ -322,81 +228,103 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
   Future<void> _startScan() async {
     int threats = 0;
+    String path = '';
+    double score = 0;
+    bool infected = false;
+    int count = 1;
 
-    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: FileType.any,
-    );
+    setState(() {
+      _isScanning = true;
+      _status = "Scanning";
+    });
 
-    if (fresult == null) return;
+    final resultp = await pythonBridge.runScript('assets/detector/detector.py');
 
-    final paths = fresult.paths.whereType<String>().toList();
+    if(resultp.success){
+      print(resultp);
 
-    for (final path in paths) {
-      setState(() => _status = 'Scanning ${basename(path)}…');
+      final documentdirectory = await getApplicationDocumentsDirectory();
+      final resultdirectory = '${documentdirectory.path}\\result.txt';
+      String resultdirectorys = resultdirectory.toString();
+      final resultdirectoryf = File(resultdirectorys);
 
-      final bytes = await File(path).readAsBytes();
-      final sizeRaw = bytes.length;
-      final entropyRaw = _calcEntropy(bytes);
-      final importRaw = countImportsFromPE(path);
-      final strScoreRaw = _stringScore(bytes);
+      try {
+        final lines = await resultdirectoryf.readAsLines();
 
-      final features = Float32List.fromList([
-        _scaleSize(sizeRaw),
-        _scaleEntropy(entropyRaw),
-        _scaleImports(importRaw),
-        _scaleStringScore(strScoreRaw),
-      ]);
-
-      print(features);
-
-      await Future.delayed(const Duration(milliseconds: 600));
-      final score = await TFLiteService.runMalwarePrediction(features);
-
-      final infected = score >= 0.5; // threshold
-      print(score);
-      final confidence = (score * 100).toStringAsFixed(1);
-      final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
-      print('- ${basename(path)}: $statusTxt ($confidence %)');
-
-      if (infected) {
-        threats++;
-
-        // Quarantine infected files
-        final quarantineSuccess = await QuarantineService.quarantineFile(
-          filePath: path,
-          threatScore: score,
-        );
-
-        if (quarantineSuccess) {
-          print('File quarantined: $path');
-        } else {
-          print('Failed to quarantine file: $path');
+        // Do something with each line
+        for (final line in lines) {
+          switch(count){
+            case 1:
+              print('Line: $line');
+              path = line;
+              count++;
+              break;
+            case 2:
+              print('Line: $line');
+              score = double.parse(line);
+              count++;
+              break;
+          }
         }
-      }
-    }
 
-    final result =
-        threats == 0
+        print(path);
+        print(score);
+
+        if(score >= 0.8){
+
+        infected = true;
+
+        }
+
+        if (infected) {
+          threats++;
+
+          // Quarantine infected files
+          final quarantineSuccess = await QuarantineService.quarantineFile(
+            filePath: path,
+            threatScore: score,
+          );
+
+          if (quarantineSuccess) {
+            print('File quarantined: $path');
+          } else {
+            print('Failed to quarantine file: $path');
+          }
+        }
+    
+
+        final result =
+          threats == 0
             ? "No threats detected."
             : "$threats threat${threats > 1 ? 's' : ''} detected.";
 
-    final newResult = ScanResult(amount: threats);
+        final newResult = ScanResult(amount: threats);
 
-    final now = DateTime.now();
-    int nowm = now.month;
-    int nowd = now.day;
-    int nowh = now.hour;
-    int nowmin = now.minute;
+        final now = DateTime.now();
+        int nowm = now.month;
+        int nowd = now.day;
+        int nowh = now.hour;
+        int nowmin = now.minute;
 
-    history.insertHistory(threats, nowm, nowd, nowh, nowmin);
+        history.insertHistory(threats, nowm, nowd, nowh, nowmin);
 
-    _scanHistory.add(newResult);
+        _scanHistory.add(newResult);
 
-    setState(() {
+        setState(() {
+          _isScanning = false;
+          _status = "Scan Complete! $result";
+        });
+
+      } catch (e) {
+        print('Error reading file: $e');
+      }
+    }else{
+      setState(() {
       _isScanning = false;
-      _status = "Scan Complete! $result";
-    });
+      _status = "Cancelled";
+      });
+    }
+      
   }
 
   Widget _buildOverviewPage() {
