@@ -69,7 +69,6 @@ flutter:
   assets:
     - assets/shield.png
     - assets/model.tflite
-    - assets/icon.png
     - assets/icon.ico
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
