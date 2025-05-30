@@ -42,7 +42,7 @@ class OllamaClient:
         self.session = requests.Session()
 
         if not self.test_connection():
-            print(f"⚠️ Warning: Cannot connect to Ollama at {base_url}")
+            print(f"[WARNING] Warning: Cannot connect to Ollama at {base_url}")
             print("Make sure Ollama is running with: ollama serve")
 
     def test_connection(self):
@@ -102,18 +102,18 @@ RESPOND IN THE EXACT FORMAT SHOWN ABOVE. Start your response with "THREAT_LEVEL:
                 }
             }
 
-            print(f"🤖 Sending to Ollama ({self.model}) for analysis...")
-            print("⏱️ Waiting for AI response (no timeout - will wait as long as needed)...")
+            print(f"[AI] Sending to Ollama ({self.model}) for analysis...")
+            print("[TIMER] Waiting for AI response (no timeout - will wait as long as needed)...")
             start_time = time.time()
             response = self.session.post(f"{self.base_url}/api/generate", json=payload)
             end_time = time.time()
             response_time = end_time - start_time
-            print(f"✅ AI response received in {response_time:.1f} seconds")
+            print(f"[OK] AI response received in {response_time:.1f} seconds")
 
             if response.status_code == 200:
                 result = response.json()
                 raw_response = result.get('response', '').strip()
-                print(f"🔍 Raw AI Response (Full):")
+                print(f"[SCAN] Raw AI Response (Full):")
                 print(f"   {raw_response}")
                 print(f"   (Total length: {len(raw_response)} chars)")
 
@@ -285,9 +285,9 @@ class EnhancedYARADetector:
         if YARA_AVAILABLE:
             try:
                 self.rules = yara.compile(source=self.rules_content)
-                print("✅ YARA rules compiled successfully")
+                print("[OK] YARA rules compiled successfully")
             except Exception as e:
-                print(f"❌ Error compiling YARA rules: {e}")
+                print(f"[ERROR] Error compiling YARA rules: {e}")
 
     def scan(self, file_path):
         if not self.rules: return []
@@ -329,8 +329,8 @@ class RealTimeMalwareDetector:
             result['file_size'] = path_obj.stat().st_size
             with open(file_path, 'rb') as f: content = f.read(); result['file_hash'] = hashlib.sha256(content).hexdigest()[:16]
 
-            print(f"\n{'='*60}\n🔍 ANALYZING: {file_path}\n📊 Size: {result['file_size']} bytes | Hash: {result['file_hash']}\n⏰ Event: {event_type} | Time: {datetime.now().strftime('%H:%M:%S')}\n{'='*60}")
-            print("🛡️ Running YARA analysis...")
+            print(f"\n{'='*60}\n[SCAN] ANALYZING: {file_path}\n[SIZE] Size: {result['file_size']} bytes | Hash: {result['file_hash']}\n[TIME] Event: {event_type} | Time: {datetime.now().strftime('%H:%M:%S')}\n{'='*60}")
+            print("[YARA] Running YARA analysis...")
             yara_matches = self.yara_detector.scan(file_path)
             result['yara_matches'] = yara_matches
             yara_threat_level = 0
@@ -339,13 +339,13 @@ class RealTimeMalwareDetector:
                     if match.get('rule') in ['Suspicious_Commands', 'Code_Injection']: yara_threat_level = max(yara_threat_level, 3)
                     elif match.get('rule') in ['Network_Activity', 'Obfuscation_Techniques']: yara_threat_level = max(yara_threat_level, 2)
                     elif match.get('rule') == 'AI_Generated_Malware': yara_threat_level = max(yara_threat_level, 1)
-                print(f"⚠️ YARA MATCHES FOUND:")
+                print(f"[WARNING] YARA MATCHES FOUND:")
                 for match in yara_matches: print(f"   - {match.get('rule', 'N/A')}: {match.get('meta', {}).get('description', 'No description')}")
-            else: print("✅ No YARA matches found")
+            else: print("[OK] No YARA matches found")
 
             need_ai_analysis = (yara_threat_level > 0 or event_type in ['created', 'modified'] or path_obj.suffix.lower() in ['.py', '.js', '.php', '.ps1'])
             if need_ai_analysis:
-                print("🤖 Requesting AI analysis...")
+                print("[AI] Requesting AI analysis...")
                 try: file_content_str = content.decode('utf-8', errors='ignore')
                 except: file_content_str = str(content)[:3000] # Fallback for binary
                 context_yara = f"YARA matches: {[m.get('rule') for m in yara_matches if 'rule' in m]}"
@@ -353,7 +353,7 @@ class RealTimeMalwareDetector:
                 result['ai_analysis'] = ai_result
 
                 if 'error' not in ai_result:
-                    print(f"🎯 AI ANALYSIS:")
+                    print(f"[ANALYSIS] AI ANALYSIS:")
                     print(f"   Threat Level: {ai_result.get('threat_level', 'UNKNOWN')}")
                     print(f"   AI Generated: {ai_result.get('ai_generated', 'UNKNOWN')}")
                     if ai_result.get('malicious_indicators'): print(f"   Malicious Indicators: {', '.join(ai_result['malicious_indicators'])}")
@@ -365,10 +365,10 @@ class RealTimeMalwareDetector:
                         print(f"   Analysis: {explanation_display}")
                     
                     if ai_result.get('recommendation'): print(f"   Recommendation: {ai_result.get('recommendation')}")
-                    if ai_result.get('response_time'): print(f"   ⏱️ Analysis Time: {ai_result['response_time']:.1f} seconds")
+                    if ai_result.get('response_time'): print(f"   [TIMER] Analysis Time: {ai_result['response_time']:.1f} seconds")
                 else:
-                    print(f"❌ AI Analysis failed: {ai_result.get('error', 'Unknown error')}")
-                    if ai_result.get('response_time', 0) > 0: print(f"   ⏱️ Failed after: {ai_result['response_time']:.1f} seconds")
+                    print(f"[ERROR] AI Analysis failed: {ai_result.get('error', 'Unknown error')}")
+                    if ai_result.get('response_time', 0) > 0: print(f"   [TIMER] Failed after: {ai_result['response_time']:.1f} seconds")
             
             final_verdict, confidence = self._calculate_final_verdict(yara_matches, result.get('ai_analysis', {}))
             result['final_verdict'], result['confidence'] = final_verdict, confidence
@@ -377,7 +377,7 @@ class RealTimeMalwareDetector:
             self.stats[f'scanned_{event_type}'] += 1; self.stats[f'verdict_{final_verdict.lower()}'] += 1
             return result
         except Exception as e:
-            print(f"❌ Error analyzing {file_path}: {e}")
+            print(f"[ERROR] Error analyzing {file_path}: {e}")
             result['error'] = str(e); result['final_verdict'] = 'ERROR'; return result
 
     def _calculate_final_verdict(self, yara_matches, ai_analysis):
@@ -404,19 +404,19 @@ class RealTimeMalwareDetector:
     def _generate_recommendations(self, result):
         recommendations = []
         ai_rec = result.get('ai_analysis', {}).get('recommendation')
-        if ai_rec: recommendations.append(f"🤖 AI REC: {ai_rec}")
+        if ai_rec: recommendations.append(f"[AI] AI REC: {ai_rec}")
         verdict = result['final_verdict']
-        if verdict == "MALICIOUS": recommendations.extend(["🚨 QUARANTINE FILE IMMEDIATELY", "🔒 Block file execution", "🕵️ Investigate source", "📝 Report to security team"])
-        elif verdict == "SUSPICIOUS": recommendations.extend(["⚠️ Monitor file activity", "🔍 Run additional scans", "🚫 Restrict permissions", "📋 Review code manually"])
-        elif verdict == "QUESTIONABLE": recommendations.extend(["👀 Keep under observation", "📊 Monitor behavior", "🔄 Rescan periodically"])
+        if verdict == "MALICIOUS": recommendations.extend(["[URGENT] QUARANTINE FILE IMMEDIATELY", "[LOCKED] Block file execution", "[INVESTIGATE] Investigate source", "[REPORT] Report to security team"])
+        elif verdict == "SUSPICIOUS": recommendations.extend(["[WARNING] Monitor file activity", "[SCAN] Run additional scans", "[BLOCK] Restrict permissions", "[REVIEW] Review code manually"])
+        elif verdict == "QUESTIONABLE": recommendations.extend(["[OBSERVE] Keep under observation", "[SIZE] Monitor behavior", "[RESCAN] Rescan periodically"])
         return list(dict.fromkeys(recommendations))
 
     def _print_final_assessment(self, result):
         verdict, confidence = result['final_verdict'], result['confidence']
-        colors = {'MALICIOUS': '🔴', 'SUSPICIOUS': '🟡', 'QUESTIONABLE': '🟠', 'CLEAN': '🟢', 'ERROR': '🟣'}
-        print(f"\n{'-'*60}\n🏷️ FINAL ASSESSMENT\n{'-'*60}\n{colors.get(verdict, '⚪')} VERDICT: {verdict} (Confidence: {confidence:.1%})")
+        colors = {'MALICIOUS': '[MALICIOUS]', 'SUSPICIOUS': '[SUSPICIOUS]', 'QUESTIONABLE': '[QUESTIONABLE]', 'CLEAN': '[CLEAN]', 'ERROR': '[ERROR]'}
+        print(f"\n{'-'*60}\n[LABEL] FINAL ASSESSMENT\n{'-'*60}\n{colors.get(verdict, '[UNKNOWN]')} VERDICT: {verdict} (Confidence: {confidence:.1%})")
         if result.get('recommendations'):
-            print(f"📋 RECOMMENDATIONS:")
+            print(f"[REVIEW] RECOMMENDATIONS:")
             for rec in result['recommendations']: print(f"   {rec}")
         print(f"{'-'*60}")
 
@@ -428,16 +428,16 @@ class RealTimeMalwareDetector:
             else: time.sleep(1)
 
     def print_statistics(self):
-        print(f"\n{'='*50}\n📊 DETECTION STATISTICS\n{'='*50}")
+        print(f"\n{'='*50}\n[SIZE] DETECTION STATISTICS\n{'='*50}")
         for key, value in sorted(self.stats.items()): print(f"{key.replace('_', ' ').title()}: {value}")
         print(f"{'='*50}")
 
 class FileSystemWatcher(FileSystemEventHandler):
     def __init__(self, detector): self.detector = detector; super().__init__()
     def on_created(self, event):
-        if not event.is_directory: print(f"📄 New file: {event.src_path}"); self.detector.queue_file_for_scan(event.src_path, "created")
+        if not event.is_directory: print(f"New file: {event.src_path}"); self.detector.queue_file_for_scan(event.src_path, "created")
     def on_modified(self, event):
-        if not event.is_directory: print(f"✏️ File modified: {event.src_path}"); self.detector.queue_file_for_scan(event.src_path, "modified")
+        if not event.is_directory: print(f"File modified: {event.src_path}"); self.detector.queue_file_for_scan(event.src_path, "modified")
 
 def main():
     parser = argparse.ArgumentParser(description='AI-Powered Real-Time Malware Detector')
@@ -448,41 +448,41 @@ def main():
     parser.add_argument('--scan-existing', action='store_true', help='Scan existing files first')
     args = parser.parse_args()
 
-    if not os.path.exists(args.path): print(f"❌ Path not found: {args.path}"); sys.exit(1)
-    print(f"🤖 AI-POWERED MALWARE DETECTOR\n{'='*60}\n📁 Target: {args.path}\n🧠 AI Model: {args.model}\n🔗 Ollama URL: {args.ollama_url}\n{'='*60}")
+    if not os.path.exists(args.path): print(f"[ERROR] Path not found: {args.path}"); sys.exit(1)
+    print(f"[AI] AI-POWERED MALWARE DETECTOR\n{'='*60}\nTarget: {args.path}\nAI Model: {args.model}\nOllama URL: {args.ollama_url}\n{'='*60}")
     detector = RealTimeMalwareDetector(args.model, args.ollama_url)
     try:
         if os.path.isfile(args.path):
-            print("🔍 Scanning single file..."); detector.scan_file_comprehensive(args.path, "manual")
+            print("[SCAN] Scanning single file..."); detector.scan_file_comprehensive(args.path, "manual")
         else:
             if args.scan_existing:
-                print("🔄 Scanning existing files...")
+                print("[RESCAN] Scanning existing files...")
                 for root, _, files in os.walk(args.path):
                     for file in files:
                         file_path = os.path.join(root, file)
                         if detector.is_scannable_file(file_path): detector.queue_file_for_scan(file_path, "existing")
             if args.watch and WATCHDOG_AVAILABLE:
-                print("👁️ Starting real-time monitoring...\nPress Ctrl+C to stop")
+                print("[WATCH] Starting real-time monitoring...\nPress Ctrl+C to stop")
                 event_handler = FileSystemWatcher(detector); observer = Observer()
                 observer.schedule(event_handler, args.path, recursive=True); observer.start()
                 try:
                     while True:
                         time.sleep(1)
                         if int(time.time()) % 60 == 0: detector.print_statistics()
-                except KeyboardInterrupt: print("\n🛑 Stopping monitoring..."); observer.stop(); detector.scanning = False
+                except KeyboardInterrupt: print("\nStopping monitoring..."); observer.stop(); detector.scanning = False
                 observer.join()
-            elif args.watch: print("❌ Real-time monitoring requires 'watchdog'. Install with: pip install watchdog")
+            elif args.watch: print("[ERROR] Real-time monitoring requires 'watchdog'. Install with: pip install watchdog")
             else: # Wait for initial queue if not watching
                 print("⏳ Waiting for initial scan queue to process...")
                 while any(item['event_type'] == 'existing' for item in detector.scan_queue): time.sleep(0.5) # Check specifically for existing
                 while detector.scan_queue : time.sleep(1) # Then ensure rest of queue clears
-                print("✅ Initial scan completed.")
+                print("[OK] Initial scan completed.")
     finally:
         detector.scanning = False # Ensure scanner thread stops
         if hasattr(detector, 'scanner_thread') and detector.scanner_thread.is_alive():
             detector.scanner_thread.join(timeout=5)
         detector.print_statistics()
-        print("\n✅ Detection session completed")
+        print("\n[OK] Detection session completed")
 
 if __name__ == "__main__":
     main()
