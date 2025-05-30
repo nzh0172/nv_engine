@@ -249,8 +249,6 @@ void _attachWatchersRecursively(Directory dir) {
 
 Future<void> _realTimeScan(File file) async {
   try {
-
-
     final path = file.path;
     final bytes = await file.readAsBytes();
     final sizeRaw = bytes.length;
@@ -276,14 +274,34 @@ Future<void> _realTimeScan(File file) async {
     final infected = score >= 0.5;
     final confidence = (score * 100).toStringAsFixed(1);
 
+    bool finalDecision = infected;
+    String explanation = '';
+
+    final ollamaResult = await runLlamaDetector(file.path);
+    if (ollamaResult != null) {
+      final verdict = ollamaResult['final_verdict'];
+      final conf = ollamaResult['confidence'];
+      final expl = ollamaResult['ai_analysis']['explanation'];
+      explanation = expl;
+
+      print("🧠 Ollama Result: $ollamaResult");
+
+      if (verdict == 'MALICIOUS' || conf >= 0.7) {
+        print('🛑 Ollama flagged this file!');
+        finalDecision = true;
+      }
+    }
+
     print(
-      '🛠️ Scanned ${basename(path)}: ${infected ? '🛑 Infected' : '✅ Clean'} ($confidence%)',
+      '🛠️ Scanned ${basename(path)}: ${finalDecision ? '🛑 Infected' : '✅ Clean'} ($confidence%)',
     );
 
     // optionally log to history
-    if (infected) {
+    if (finalDecision) {
       final now = DateTime.now();
       history.insertHistory(1, now.month, now.day, now.hour, now.minute);
+
+      print("🧠 Ollama Response:\n$explanation");
 
       final quarantineSuccess = await QuarantineService.quarantineFile(
         filePath: path,
@@ -291,22 +309,21 @@ Future<void> _realTimeScan(File file) async {
       );
 
       if (quarantineSuccess) {
-         print('File quarantined: $path');
+        print('File quarantined: $path');
       } else {
         print('Failed to quarantine file: $path');
       }
     }
     final quarantineSuccess = await QuarantineService.quarantineFile(
-          filePath: path,
-          threatScore: score,
-        );
+      filePath: path,
+      threatScore: score,
+    );
 
-        if (quarantineSuccess) {
-          print('File quarantined: $path');
-        } else {
-          print('Failed to quarantine file: $path');
-        }
-        
+    if (quarantineSuccess) {
+      print('File quarantined: $path');
+    } else {
+      print('Failed to quarantine file: $path');
+    }
   } catch (e) {
     print('Error scanning file ${file.path}: $e');
   }
