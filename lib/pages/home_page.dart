@@ -337,6 +337,32 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   List<ScanResult> _scanHistory = [];
   static bool _darkModeEnabled = false;
 
+  Future<void> _launchOllamaScan(String filePath) async {
+    if (filePath.isEmpty) {
+      return;
+    }
+
+    // ── UPDATE THESE TWO LINES: ─────────────────────────────
+    // 1) Folder where your .bat resides (e.g. C:\Users\NazirulHadi\av_scripts)
+    final batDirectory = r'C:\Users\user\Documents\flutter_projects\nv_engine';
+
+    // 2) Exact name of your batch file (must be inside batDirectory)
+    final batName = 'launch_av_with_terminal.bat';
+    // ─────────────────────────────────────────────────────────
+
+    try {
+      // This will open a new CMD window and pass filePath as %1
+      await Process.start(
+        'cmd',
+        ['/c', 'start', batName, filePath],
+        workingDirectory: batDirectory,
+        runInShell: true,
+      );
+    } catch (e) {
+      debugPrint('Error launching scan: $e');
+    }
+  }
+
   Future<void> _startScan() async {
     int threats = 0;
 
@@ -369,6 +395,8 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
 
       await Future.delayed(const Duration(milliseconds: 600));
       final score = await TFLiteService.runMalwarePrediction(features);
+
+      await _launchOllamaScan(path);
 
       final infected = score >= 0.5; // threshold
       print(score);

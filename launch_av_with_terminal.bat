@@ -1,16 +1,21 @@
 @echo off
-REM File: launch_av_with_terminal.bat
-REM Purpose: Launch AV Flutter app + Ollama backend terminal on Windows and close both on AV exit
+REM ========================================
+REM launch_av_with_terminal.bat
+REM Usage: launch_av_with_terminal.bat "C:\some\folder\to\scan"
+REM ========================================
 
-echo 🔒 Launching Antivirus Engine and Ollama Backend...
+REM 1) Move into the script’s directory so python can find ai_powered_detector.py
+cd /d "%~dp0"
 
-REM Launch Ollama backend in new terminal
-start "Ollama Backend" cmd /k python backend/setup_script.py
+echo.
+echo ✅  AI‐Powered Malware Scanner
+echo     Scanning target: "%~1"
+echo ==================================================
 
-REM Launch Flutter antivirus desktop app and wait for it to close
-start /wait "Antivirus App" "build\windows\x64\runner\Release\nv_engine.exe"
+REM 2) Run the detector on the passed‐in path
+python backend/ai_powered_detector.py "%~1" --scan-existing
 
-REM After AV app exits, kill Ollama backend terminal
-taskkill /FI "WINDOWTITLE eq Ollama Backend*" /T /F
-
-echo ✅ Antivirus session ended. All processes closed.
+echo.
+echo ==================================================
+echo ✅  Scan finished. Press any key to close this window.
+pause >nul
