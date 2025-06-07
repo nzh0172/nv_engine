@@ -337,6 +337,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   List<ScanResult> _scanHistory = [];
   static bool _darkModeEnabled = false;
 
+  //this one runs the console externally
   Future<void> _launchOllamaScan(String filePath) async {
     if (filePath.isEmpty) {
       return;
@@ -363,84 +364,165 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     }
   }
 
+  bool _isAiRunning = false;
+
+  /// Returns true if the last Python detector call is still executing.
+  bool get isAiDetectorRunning => _isAiRunning;
+
+  //this one makes the result scan ollama to ui
+  Future<Map<String, dynamic>> _launchOllamaScanUI(String path) async {
+    setState(() {
+      _isAiRunning = true;
+    });
+
+    final proc = await Process.start(
+      'python', // or full path to python.exe
+      [
+        r'C:\Users\user\Documents\flutter_projects\nv_engine\backend\ai_powered_detector.py',
+        path,
+      ],
+      runInShell: true,
+    );
+    // optionally, capture stderr and log it
+    proc.stderr.transform(utf8.decoder).listen((e) {
+      debugPrint('[AI STDERR] $e');
+    });
+    final raw = await proc.stdout.transform(utf8.decoder).join();
+    //await proc.stderr.drain(); // ignore logs
+    setState(() {
+      _isAiRunning = false;
+    });
+
+    return jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Displays the combined TFLite + Ollama analysis in a dialog
+  /// Shows quarantine status if performed automatically
+  void _showResultDialog(Map<String, dynamic> result, bool quarantined) {
+    // Extract maps
+    final ai = result['ai_analysis'] as Map<String, dynamic>;
+    final tflite = result['tflite_analysis'] as Map<String, dynamic>;
+    final verdict = result['final_verdict'] as String;
+    final confidence = (result['confidence'] as num).toDouble();
+
+    showDialog(
+      context: this.context,
+      builder:
+          (_) => AlertDialog(
+            title: Text('Verdict: $verdict'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '🤖 TFLite: ${tflite['label']} @ ${(tflite['score'] as num).toDouble().toStringAsFixed(2)}',
+                  ),
+                  const SizedBox(height: 8),
+                  Text('🔍 AI Threat: ${ai['threat_level']}'),
+                  const SizedBox(height: 4),
+                  Text('💡 Explanation: ${ai['explanation']}'),
+                  if (ai['recommendation'] != null &&
+                      ai['recommendation'].toString().isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text('🔧 Recommendation: ${ai['recommendation']}'),
+                  ],
+                  const SizedBox(height: 12),
+                  Text('Overall Confidence: ${confidence.toStringAsFixed(2)}'),
+                  if (quarantined) ...[
+                    const SizedBox(height: 12),
+                    Text('🚫 File has been quarantined.'),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(this.context),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+    );
+  }
+
   Future<void> _startScan() async {
     int threats = 0;
 
-    FilePickerResult? fresult = await FilePicker.platform.pickFiles(
+    // 1) Pick any number of files
+    final fresult = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.any,
     );
-
     if (fresult == null) return;
-
     final paths = fresult.paths.whereType<String>().toList();
 
     for (final path in paths) {
       setState(() => _status = 'Scanning ${basename(path)}…');
 
+      // ── Your original feature extraction & TFLite step ──
       final bytes = await File(path).readAsBytes();
       final sizeRaw = bytes.length;
-      final entropyRaw = _calcEntropy(bytes);
-      final importRaw = countImportsFromPE(path);
-      final strScoreRaw = _stringScore(bytes);
+      final entropy = _calcEntropy(bytes);
+      final imports = countImportsFromPE(path);
+      final strScore = _stringScore(bytes);
 
       final features = Float32List.fromList([
         _scaleSize(sizeRaw),
-        _scaleEntropy(entropyRaw),
-        _scaleImports(importRaw),
-        _scaleStringScore(strScoreRaw),
+        _scaleEntropy(entropy),
+        _scaleImports(imports),
+        _scaleStringScore(strScore),
       ]);
+      final tfliteScore = await TFLiteService.runMalwarePrediction(features);
 
-      print(features);
+      // ── New: call your Python detector to get YARA+Ollama ANALYSIS plus the final verdict ──
+      final result = await _launchOllamaScanUI(path);
+      // At any point you can check `isAiDetectorRunning`:
+      print(
+        'Detector running? $isAiDetectorRunning',
+      ); // false immediately after
+      // result must contain:
+      //   result['ai_analysis']    → { 'threat_level', 'explanation', 'recommendation' }
+      //   result['tflite_analysis']→ { 'score', 'label' }
+      //   result['final_verdict']  → 'MALICIOUS'|'SUSPICIOUS'|'CLEAN'
+      //   result['confidence']     → numeric 0.0–1.0
 
-      await Future.delayed(const Duration(milliseconds: 600));
-      final score = await TFLiteService.runMalwarePrediction(features);
-
-      await _launchOllamaScan(path);
-
-      final infected = score >= 0.5; // threshold
-      print(score);
-      final confidence = (score * 100).toStringAsFixed(1);
-      final statusTxt = infected ? '🛑 Infected' : '✅ Clean';
-      print('- ${basename(path)}: $statusTxt ($confidence %)');
-
-      if (infected) {
+      // ── Quarantine if the combined verdict says so ──
+      final verdict = result['final_verdict'] as String;
+      if (verdict == 'MALICIOUS' || verdict == 'SUSPICIOUS') {
         threats++;
-
-        // Quarantine infected files
-        final quarantineSuccess = await QuarantineService.quarantineFile(
+        final ok = await QuarantineService.quarantineFile(
           filePath: path,
-          threatScore: score,
+          threatScore: result['confidence'] as double,
         );
+        print(ok ? '✅ Quarantined: $path' : '❌ Quarantine failed: $path');
 
-        if (quarantineSuccess) {
-          print('File quarantined: $path');
-        } else {
-          print('Failed to quarantine file: $path');
-        }
+        _showResultDialog(result, ok);
       }
+
+      // ── Update per‐file UI/console output ──
+      final infected = (verdict == 'MALICIOUS' || verdict == 'SUSPICIOUS');
+      final statusEmoji = infected ? '🛑' : '✅';
+      final confPct = (tfliteScore * 100).toStringAsFixed(1);
+      print('- ${basename(path)}: $statusEmoji $verdict ($confPct% TFLite)');
+      // you can also surface the LLM explanation in your UI here if you like:
+      //   result['ai_analysis']['explanation']
+
+      // small pause to keep UI responsive
+      await Future.delayed(const Duration(milliseconds: 300));
     }
 
-    final result =
+    // ── After loop: show summary & update history ──
+    final summary =
         threats == 0
-            ? "No threats detected."
-            : "$threats threat${threats > 1 ? 's' : ''} detected.";
-
-    final newResult = ScanResult(amount: threats);
-
+            ? 'No threats detected.'
+            : '$threats threat${threats > 1 ? 's' : ''} detected.';
     final now = DateTime.now();
-    int nowm = now.month;
-    int nowd = now.day;
-    int nowh = now.hour;
-    int nowmin = now.minute;
-
-    history.insertHistory(threats, nowm, nowd, nowh, nowmin);
-
-    _scanHistory.add(newResult);
+    history.insertHistory(threats, now.month, now.day, now.hour, now.minute);
+    _scanHistory.add(ScanResult(amount: threats));
 
     setState(() {
       _isScanning = false;
-      _status = "Scan Complete! $result";
+      _status = 'Scan Complete! $summary';
     });
   }
 
