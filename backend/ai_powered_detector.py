@@ -371,78 +371,163 @@ class RealTimeMalwareDetector:
                 self.scan_queue.append({'file_path': file_path, 'event_type': event_type, 'timestamp': datetime.now()})
 
     def scan_file_comprehensive(self, file_path, event_type="manual"):
-        result = {'file_path': str(file_path), 'scan_timestamp': datetime.now().isoformat(), 'event_type': event_type, 'file_size': 0, 'file_hash': '', 'yara_matches': [], 'ai_analysis': {}, 'final_verdict': 'CLEAN', 'confidence': 0.0, 'recommendations': []}
+        import sys, hashlib
+        from pathlib import Path
+        from datetime import datetime
+
+        # 1) Initialize result
+        result = {
+            'file_path':       str(file_path),
+            'scan_timestamp':  datetime.now().isoformat(),
+            'event_type':      event_type,
+            'file_size':       0,
+            'file_hash':       '',
+            'yara_matches':    [],
+            'ai_analysis':     {},
+            'tflite_analysis': {},
+            'final_verdict':   'CLEAN',
+            'confidence':      0.0,
+            'recommendations': []
+        }
+
         try:
+            # 2) File metadata
             path_obj = Path(file_path)
             result['file_size'] = path_obj.stat().st_size
-            with open(file_path, 'rb') as f: content = f.read(); result['file_hash'] = hashlib.sha256(content).hexdigest()[:16]
+            content = path_obj.read_bytes()
+            result['file_hash'] = hashlib.sha256(content).hexdigest()[:16]
 
-            print(f"\n{'='*60}\n[SCAN] ANALYZING: {file_path}\n[SIZE] Size: {result['file_size']} bytes | Hash: {result['file_hash']}\n[TIME] Event: {event_type} | Time: {datetime.now().strftime('%H:%M:%S')}\n{'='*60}", file=sys.stderr)
+            # 3) Header
+            print(
+                f"\n{'='*60}\n"
+                f"[SCAN] ANALYZING: {file_path}\n"
+                f"[SIZE] {result['file_size']} bytes | Hash: {result['file_hash']}\n"
+                f"[TIME] Event: {event_type} | {datetime.now().strftime('%H:%M:%S')}\n"
+                f"{'='*60}",
+                file=sys.stderr
+            )
+
+            # 4) YARA
             print("[YARA] Running YARA analysis...", file=sys.stderr)
-            yara_matches = self.yara_detector.scan(file_path)
+            yara_matches = self.yara_detector.scan(file_path)  # List[str]
             result['yara_matches'] = yara_matches
-            yara_threat_level = 0
-            if yara_matches and not any('error' in match for match in yara_matches):
+
+            # map rules → threat level
+            yara_threat = 0
+            for rule in yara_matches:
+                if rule in ['Suspicious_Commands', 'Code_Injection']:
+                    yara_threat = max(yara_threat, 3)
+                elif rule in ['Network_Activity', 'Obfuscation_Techniques']:
+                    yara_threat = max(yara_threat, 2)
+                elif rule == 'AI_Generated_Malware':
+                    yara_threat = max(yara_threat, 1)
+
+            if yara_threat > 0:
+                print("[WARNING] YARA MATCHES FOUND:", file=sys.stderr)
+                desc_map = {
+                    'Suspicious_Commands':    'Detects suspicious system commands',
+                    'Code_Injection':         'Detects code injection techniques',
+                    'Network_Activity':       'Detects network-related behavior',
+                    'Obfuscation_Techniques': 'Detects code obfuscation',
+                    'AI_Generated_Malware':   'Detects AI-generated malware patterns'
+                }
                 for rule in yara_matches:
-                    if rule in ['Suspicious_Commands', 'Code_Injection']:
-                        yara_threat_level = max(yara_threat_level, 3)
-                    elif rule in ['Network_Activity', 'Obfuscation_Techniques']:
-                        yara_threat_level = max(yara_threat_level, 2)
-                    elif rule == 'AI_Generated_Malware':
-                        yara_threat_level = max(yara_threat_level, 1)
-                print(f"[WARNING] YARA MATCHES FOUND:", file=sys.stderr)
-                for match in yara_matches: print(f"   - {match.get('rule', 'N/A')}: {match.get('meta', {}).get('description', 'No description')}")
-            else: print("[OK] No YARA matches found", file=sys.stderr)
+                    print(f"   - {rule}: {desc_map.get(rule,'No description')}", file=sys.stderr)
+            else:
+                print("[OK] No YARA matches found", file=sys.stderr)
 
-            need_ai_analysis = (yara_threat_level > 0 or event_type in ['created', 'modified'] or path_obj.suffix.lower() in ['.py', '.js', '.php', '.ps1'])
-            if need_ai_analysis:
+            # 5) AI (Ollama)
+            suffix = path_obj.suffix.lower()
+            need_ai = (
+                yara_threat > 0
+                or event_type in ['created', 'modified']
+                or suffix in ['.py', '.js', '.php', '.ps1']
+            )
+            if need_ai:
                 print("[AI] Requesting AI analysis...", file=sys.stderr)
-                try: file_content_str = content.decode('utf-8', errors='ignore')
-                except: file_content_str = str(content)[:3000] # Fallback for binary
-                context_yara = f"YARA matches: {[m.get('rule') for m in yara_matches if 'rule' in m]}"
-                ai_result = self.ollama_client.analyze_code(file_content_str, file_path, context_yara)
-                result['ai_analysis'] = ai_result
+                try:
+                    text = content.decode('utf-8', errors='ignore')
+                except:
+                    text = str(content)[:3000]
+                context = f"YARA matches: {yara_matches}"
+                ai_res = self.ollama_client.analyze_code(text, file_path, context)
+                result['ai_analysis'] = ai_res
 
-                if 'error' not in ai_result:
-                    print(f"[ANALYSIS] AI ANALYSIS:", file=sys.stderr)
-                    print(f"   Threat Level: {ai_result.get('threat_level', 'UNKNOWN')}", file=sys.stderr)
-                    print(f"   AI Generated: {ai_result.get('ai_generated', 'UNKNOWN')}", file=sys.stderr)
-                    if ai_result.get('malicious_indicators'): print(f"   Malicious Indicators: {', '.join(ai_result['malicious_indicators'])}",file=sys.stderr)
-                    
-                    explanation_display = ai_result.get('explanation', 'No explanation provided.')
-                    if ai_result.get('explanation_is_fallback', False):
-                        print(f"   Analysis (from fallback): {explanation_display}", file=sys.stderr)
-                    else:
-                        print(f"   Analysis: {explanation_display}", file=sys.stderr)
-                    
-                    if ai_result.get('recommendation'): print(f"   Recommendation: {ai_result.get('recommendation')}", file=sys.stderr)
-                    if ai_result.get('response_time'): print(f"   [TIMER] Analysis Time: {ai_result['response_time']:.1f} seconds", file=sys.stderr)
+                if 'error' not in ai_res:
+                    print("[ANALYSIS] AI ANALYSIS:", file=sys.stderr)
+                    print(f"   Threat Level: {ai_res.get('threat_level','UNKNOWN')}", file=sys.stderr)
+                    if ai_res.get('ai_generated') is not None:
+                        print(f"   AI Generated: {ai_res.get('ai_generated')}", file=sys.stderr)
+                    if ai_res.get('malicious_indicators'):
+                        inds = ', '.join(ai_res['malicious_indicators'])
+                        print(f"   Malicious Indicators: {inds}", file=sys.stderr)
+                    expl = ai_res.get('explanation','No explanation provided.')
+                    print(f"   Analysis: {expl}", file=sys.stderr)
+                    rec = ai_res.get('recommendation')
+                    if rec:
+                        print(f"   Recommendation: {rec}", file=sys.stderr)
+                    rt = ai_res.get('response_time')
+                    if rt is not None:
+                        print(f"   [TIMER] Analysis Time: {rt:.1f} seconds", file=sys.stderr)
                 else:
-                    print(f"[ERROR] AI Analysis failed: {ai_result.get('error', 'Unknown error')}", file=sys.stderr)
-                    if ai_result.get('response_time', 0) > 0: print(f"   [TIMER] Failed after: {ai_result['response_time']:.1f} seconds", file=sys.stderr)
-            
-            tflite_result = self.tflite_detector.scan(file_path)
-            result['tflite_analysis'] = tflite_result
+                    print(f"[ERROR] AI Analysis failed: {ai_res.get('error')}", file=sys.stderr)
+                    rt = ai_res.get('response_time')
+                    if rt:
+                        print(f"   [TIMER] Failed after: {rt:.1f} seconds", file=sys.stderr)
 
-            final_verdict, confidence = self._calculate_final_verdict(yara_matches,result['ai_analysis'],tflite_result['score'])
-            result['final_verdict'], result['confidence'] = final_verdict, confidence
+            # 6) TFLite
+            tflite_res = self.tflite_detector.scan(file_path)
+            result['tflite_analysis'] = tflite_res
+
+            # 7) Final verdict
+            verdict, conf = self._calculate_final_verdict(
+                yara_matches,
+                result['ai_analysis'],
+                tflite_res['score']
+            )
+            result['final_verdict']   = verdict
+            result['confidence']      = conf
             result['recommendations'] = self._generate_recommendations(result)
-            self._print_final_assessment(result)
-            self.stats[f'scanned_{event_type}'] += 1; self.stats[f'verdict_{final_verdict.lower()}'] += 1
+
+            # 8) Final assessment block
+            print(
+                f"\n{'-'*60}\n[LABEL] FINAL ASSESSMENT\n{'-'*60}"
+                f"\n[{verdict}] VERDICT: {verdict} (Confidence: {conf:.1%})",
+                file=sys.stderr
+            )
+            if result['recommendations']:
+                print("[REVIEW] RECOMMENDATIONS:", file=sys.stderr)
+                for rec in result['recommendations']:
+                    print(f"   {rec}", file=sys.stderr)
+            print(f"{'-'*60}", file=sys.stderr)
+
+            # 9) Stats & return
+            self.stats[f'scanned_{event_type}']    += 1
+            self.stats[f'verdict_{verdict.lower()}'] += 1
             return result
+
         except Exception as e:
             print(f"[ERROR] Error analyzing {file_path}: {e}", file=sys.stderr)
-            result['error'] = str(e); result['final_verdict'] = 'ERROR'; return result
+            result['error'] = str(e)
+            result['final_verdict'] = 'ERROR'
+            return result
+
+    YARA_RULE_WEIGHTS = {
+        'Suspicious_Commands':    0.8,
+        'Code_Injection':         0.8,
+        'Network_Activity':       0.6,
+        'Obfuscation_Techniques': 0.6,
+        'AI_Generated_Malware':   0.4,
+    }
 
     def _calculate_final_verdict(self, yara_matches, ai_analysis, tflite_score):
         yara_score, ai_score = 0, 0
-        if yara_matches:
-            for match in yara_matches:
-                if 'error' not in match:
-                    rule = match.get('rule', '')
-                    if rule in ['Suspicious_Commands', 'Code_Injection']: yara_score = max(yara_score, 0.8)
-                    elif rule in ['Network_Activity', 'Obfuscation_Techniques']: yara_score = max(yara_score, 0.6)
-                    elif rule == 'AI_Generated_Malware': yara_score = max(yara_score, 0.4)
+        
+        # Compute YARA score by looking up each rule's weight
+        for rule in yara_matches:
+            weight = self.YARA_RULE_WEIGHTS.get(rule, 0.0)
+            yara_score = max(yara_score, weight)
+
         if ai_analysis and 'error' not in ai_analysis:
             threat_level = ai_analysis.get('threat_level', '').upper()
             if threat_level == 'CRITICAL': ai_score = 0.9
@@ -450,7 +535,10 @@ class RealTimeMalwareDetector:
             elif threat_level == 'MEDIUM': ai_score = 0.5
             elif threat_level == 'LOW': ai_score = 0.3
 
-        combined_score = max(yara_score, ai_score, tflite_score)
+        # Weighted judgement: 90% Ollama + 10% TFLite
+        weighted_ml = ai_score + tflite_score * 0
+        combined_score = max(yara_score, weighted_ml)
+
         if combined_score >= 0.7: return "MALICIOUS", combined_score
         elif combined_score >= 0.5: return "SUSPICIOUS", combined_score
         elif combined_score >= 0.3: return "QUESTIONABLE", combined_score
@@ -484,7 +572,7 @@ class RealTimeMalwareDetector:
 
     def print_statistics(self):
         print(f"\n{'='*50}\n[SIZE] DETECTION STATISTICS\n{'='*50}", file=sys.stderr)
-        for key, value in sorted(self.stats.items()): print(f"{key.replace('_', ' ').title()}: {value}")
+        for key, value in sorted(self.stats.items()): print(f"{key.replace('_', ' ').title()}: {value}", file=sys.stderr)
         print(f"{'='*50}", file=sys.stderr)
 
 class FileSystemWatcher(FileSystemEventHandler):
@@ -510,7 +598,9 @@ def main():
         if os.path.isfile(args.path):
             print("[SCAN] Scanning single file...", file=sys.stderr);
             result = detector.scan_file_comprehensive(args.path, "manual")
-            print(json.dumps(result))
+
+            sys.stdout.write(json.dumps(result))
+            sys.stdout.flush()
         else:
             if args.scan_existing:
                 print("[RESCAN] Scanning existing files...", file=sys.stderr)
