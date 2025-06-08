@@ -54,3 +54,10 @@ add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
     "${CMAKE_SOURCE_DIR}/runner/libtensorflowlite_c-win.dll"
     "$<TARGET_FILE_DIR:${BINARY_NAME}>/blobs/libtensorflowlite_c-win.dll"
 )
+
+# Copy the entire python backend folder into the runtime output directory
+add_custom_command(TARGET ${BINARY_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/../backend"
+    "$<TARGET_FILE_DIR:${BINARY_NAME}>/backend"
+)

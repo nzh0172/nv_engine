@@ -10,6 +10,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:nv_engine/models/scan_result.dart';
 import 'package:path/path.dart';
+import 'package:path/path.dart' as p; // for finding ai_powered_detector.py
 import 'package:provider/provider.dart';
 import 'package:nv_engine/theme/theme_provider.dart';
 import 'package:nv_engine/widgets/navigation_panel.dart';
@@ -414,7 +415,15 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
     }
   }
 
+  // Fixed hardcoded path to find ai_powered_detector.py
+  String getScriptPath() {
+    // Where the running .exe lives:
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    return p.join(exeDir, 'backend', 'ai_powered_detector.py');
+  }
+
   bool _isAiRunning = false;
+  String _consoleLog = '';
 
   /// Returns true if the last Python detector call is still executing.
   bool get isAiDetectorRunning => _isAiRunning;
@@ -423,19 +432,24 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   Future<Map<String, dynamic>> _launchOllamaScanUI(String path) async {
     setState(() {
       _isAiRunning = true;
+      _consoleLog = ''; //clear old console
     });
+
+    //Find ai_powered_detector.py
+    final script = getScriptPath();
 
     final proc = await Process.start(
       'python', // or full path to python.exe
-      [
-        r'C:\Users\Naqib\Desktop\capstone\nv_engine-master\nv_engine-master\backend\ai_powered_detector.py',
-        path,
-      ],
+      [script, path],
       runInShell: true,
     );
+
     // optionally, capture stderr and log it
     proc.stderr.transform(utf8.decoder).listen((e) {
       debugPrint('[AI STDERR] $e');
+      setState(() {
+        _consoleLog += e;
+      });
     });
     final raw = await proc.stdout.transform(utf8.decoder).join();
     //await proc.stderr.drain(); // ignore logs
@@ -653,6 +667,37 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                 child: Text(
                   _isScanning ? "Scanning..." : "Start Scan",
                   style: const TextStyle(fontSize: 18, color: Colors.white),
+                ),
+              ),
+
+              const SizedBox(height: 15),
+
+              // 3) Fake console
+              Expanded(
+                child: Container(
+                  color: Colors.black,
+                  padding: const EdgeInsets.all(8),
+                  width: double.infinity,
+                  child:
+                      _consoleLog.isEmpty
+                          ? const Text(
+                            'Logs will appear here…',
+                            style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontFamily: 'Courier',
+                            ),
+                          )
+                          : SingleChildScrollView(
+                            reverse: true,
+                            child: Text(
+                              _consoleLog,
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontFamily: 'Courier',
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
                 ),
               ),
             ],
