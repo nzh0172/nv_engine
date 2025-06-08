@@ -41,8 +41,18 @@ except ImportError:
     print("[ERROR] Missing tflite-runtime or numpy. Install with: pip install tflite-runtime numpy", file=sys.stderr)
     sys.exit(1)
 
+# PLACE MODEL.TFLITE IN BACKEND FOLDER
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODEL = os.path.join(SCRIPT_DIR, "model.tflite")
+
 class TFLiteDetector:
-    def __init__(self, model_path="assets/model.tflite"):
+    def __init__(self, model_path=DEFAULT_MODEL):
+        try:
+            if not os.path.isfile(model_path):
+                raise FileNotFoundError(f"Could not find TFLite model at '{model_path}'. Please place it into backend folder for development")
+        except FileNotFoundError as e:
+            print(f"[ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
         self.interpreter = Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
         self.input_details  = self.interpreter.get_input_details()
@@ -61,7 +71,7 @@ class TFLiteDetector:
         self.interpreter.invoke()
         out = self.interpreter.get_tensor(self.output_details[0]['index'])
         score = float(out.flat[0])
-        label = 'MALICIOUS' if score > 0.5 else 'CLEAN'
+        label = 'MALICIOUS' if score > 0.7 else 'CLEAN'
         return {'label': label, 'score': score}
 
 class OllamaClient:
@@ -354,7 +364,7 @@ class RealTimeMalwareDetector:
         self.scannable_extensions = {'.py', '.js', '.php', '.pl', '.rb', '.sh', '.bat', '.cmd', '.ps1', '.vbs', '.jar', '.exe', '.dll', '.scr', '.com', '.html', '.htm', '.asp', '.aspx', '.jsp'}
         self.scanner_thread = threading.Thread(target=self._background_scanner, daemon=True)
         self.scanner_thread.start()
-        self.tflite_detector = TFLiteDetector("assets/model.tflite")
+        self.tflite_detector = TFLiteDetector()
 
 
     def is_scannable_file(self, file_path):
@@ -536,8 +546,19 @@ class RealTimeMalwareDetector:
             elif threat_level == 'LOW': ai_score = 0.3
 
         # Weighted judgement: 90% Ollama + 10% TFLite
-        weighted_ml = ai_score + tflite_score * 0
-        combined_score = max(yara_score, weighted_ml)
+        a = 0.9
+        w_ai = 0.4
+        w_tf = 0.2
+        w_yara = 0.4
+        geometric_mean = (ai_score**w_ai) * (tflite_score**w_tf) * (yara_score**w_yara)
+
+        combined_score = geometric_mean
+
+        print(f"TFLite score: {tflite_score}", file=sys.stderr)
+        print(f"Yara score: {yara_score}", file=sys.stderr)
+        print(f"AI score: {ai_score}", file=sys.stderr)
+
+        print(f"Mean score: {combined_score}", file=sys.stderr)
 
         if combined_score >= 0.7: return "MALICIOUS", combined_score
         elif combined_score >= 0.5: return "SUSPICIOUS", combined_score
@@ -557,7 +578,7 @@ class RealTimeMalwareDetector:
     def _print_final_assessment(self, result):
         verdict, confidence = result['final_verdict'], result['confidence']
         colors = {'MALICIOUS': '[MALICIOUS]', 'SUSPICIOUS': '[SUSPICIOUS]', 'QUESTIONABLE': '[QUESTIONABLE]', 'CLEAN': '[CLEAN]', 'ERROR': '[ERROR]'}
-        print(f"\n{'-'*60}\n[LABEL] FINAL ASSESSMENT\n{'-'*60}\n{colors.get(verdict, '[UNKNOWN]')} VERDICT: {verdict} (Confidence: {confidence:.1%})")
+        print(f"\n{'-'*60}\n[LABEL] FINAL ASSESSMENT\n{'-'*60}\n{colors.get(verdict, '[UNKNOWN]')} VERDICT: {verdict} (Confidence: {confidence:.1%})", file=sys.stderr)
         if result.get('recommendations'):
             print(f"[REVIEW] RECOMMENDATIONS:", file=sys.stderr)
             for rec in result['recommendations']: print(f"   {rec}")
