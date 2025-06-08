@@ -35,6 +35,26 @@ class AntivirusHomePage extends StatefulWidget {
 
 late bool _realTimeProtectionEnabled;
 
+String watching = 'non';
+
+Future<void> _choosefile() async {
+
+  String? directory = await FilePicker.platform.getDirectoryPath();
+
+  if (directory == null) {
+   return;
+  }
+
+  String tdirectory = directory;
+
+  print(tdirectory);
+
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  await prefs.setString('rts', tdirectory);
+
+}
+
 Future<void> getRealTimeScan() async {
   final SharedPreferences prefs = await SharedPreferences.getInstance();
 
@@ -198,15 +218,45 @@ Future<void> getSchedule() async {
   }
 }
 
-void startSafeSystemWatcher() {
-  //Fixed hardcoded path
-  final String homeDir =
+Future<void> startSafeSystemWatcher() async {
+  
+  final SharedPreferences prefs = await SharedPreferences.getInstance();
+
+  final String? rts = prefs.getString('rts');
+
+  print(rts);
+
+  List<String> rrts = ['a'];
+
+  if(rts == null){
+
+    final String homeDir =
       Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? '';
 
-  final List<String> roots =
+    rrts =
       Platform.isWindows
           ? ['$homeDir\\Downloads'] // This works for any Windows user
-          : ['$homeDir/Downloads']; // macOS/Linux Downloads folder
+          : ['$homeDir/Downloads'];
+
+    watching = 'Downloads (default)';
+
+  }else{
+
+    rrts = [rts];
+
+    watching = rts;
+
+  }
+
+  print(rrts);
+    
+  List<String> roots = rrts;
+
+  print(roots);
+  
+
+  //put return if the watcher load is high
+  //return;
 
   for (final root in roots) {
     _attachWatchersRecursively(Directory(root));
@@ -460,6 +510,11 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
   }
 
   Future<void> _startScan() async {
+    setState(() {
+      _isScanning = true;
+      _status = 'Choosing file';
+    });
+
     int threats = 0;
 
     // 1) Pick any number of files
@@ -467,7 +522,14 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
       allowMultiple: true,
       type: FileType.any,
     );
-    if (fresult == null) return;
+    if (fresult == null) {
+      setState(() {
+        _isScanning = false;
+        _status = 'Cancelled';
+      });
+      return;
+
+    } 
     final paths = fresult.paths.whereType<String>().toList();
 
     for (final path in paths) {
@@ -574,7 +636,9 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
               FutureBuilder(
                 future: history.getHistory(),
                 builder: (BuildContext context, AsyncSnapshot snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
+                  if (_isScanning == true){
+                    return Center(child: CircularProgressIndicator());
+                  } else if (snapshot.connectionState == ConnectionState.waiting) {
                     return Center(child: CircularProgressIndicator());
                   } else if (snapshot.hasError) {
                     return Text('Error: ${snapshot.error}');
@@ -701,7 +765,28 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                     },
                     title: const Text("Enable Real-Time Protection"),
                   ),
-
+                  const SizedBox(height: 10),
+                  ListTile(
+                    title: Text("Folder to watch (Now watching $watching)(requires restart)"), // Text widget for the title
+                    trailing: ElevatedButton(
+                      onPressed: _choosefile,
+                      style: ElevatedButton.styleFrom(
+                      backgroundColor: accentGreen,
+                      padding: const EdgeInsets.symmetric(
+                      horizontal: 40,
+                      vertical: 16,
+                    ),
+                      shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                  "Choose file",
+                  style: const TextStyle(fontSize: 18, color: Colors.white),
+                  ),
+                  ),
+                  ),
+                  const SizedBox(height: 20),
                   ListTile(
                     title: Text("Scheduled Scan"), // Text widget for the title
                     trailing: DropdownMenu(
@@ -720,66 +805,6 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                         });
                       },
                       dropdownMenuEntries: menuEntries,
-                    ),
-                  ),
-
-                  ListTile(
-                    leading: Icon(Icons.shield, color: accentGreen),
-                    title: const Text("Firewall: Active"),
-                    subtitle: const Text(
-                      "Your system is protected from network threats.",
-                    ),
-                  ),
-
-                  ExpansionTile(
-                    leading: const Icon(Icons.warning_amber, color: Colors.red),
-                    title: const Text("Threats Blocked: 5"),
-                    subtitle: const Text("Last 30 days"),
-                    children: [
-                      ListTile(
-                        title: const Text("Malware.ABC"),
-                        subtitle: const Text("Blocked on Apr 1"),
-                        trailing: ElevatedButton(
-                          onPressed: () {},
-                          child: const Text("Details"),
-                        ),
-                      ),
-                      ListTile(
-                        title: const Text("Trojan.XYZ"),
-                        subtitle: const Text("Blocked on Mar 30"),
-                        trailing: ElevatedButton(
-                          onPressed: () {},
-                          child: const Text("Details"),
-                        ),
-                      ),
-                      ListTile(
-                        title: const Text("Spyware.123"),
-                        subtitle: const Text("Blocked on Mar 27"),
-                        trailing: ElevatedButton(
-                          onPressed: () {},
-                          child: const Text("Details"),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _isScanning ? null : _startScan,
-                    icon: const Icon(Icons.search, color: Colors.white),
-                    label: const Text(
-                      "Run Quick Scan",
-                      style: TextStyle(fontSize: 18, color: Colors.white),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: accentGreen,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 40,
-                        vertical: 16,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
                     ),
                   ),
                 ],
@@ -919,16 +944,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
             "Settings",
             style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
           ),
-          const SizedBox(height: 20),
-          SwitchListTile(
-            value: _notificationsEnabled,
-            onChanged: (val) {
-              setState(() {
-                _notificationsEnabled = val;
-              });
-            },
-            title: const Text("Enable Notifications"),
-          ),
+          const SizedBox(height: 10),
           SwitchListTile(
             value: themeProvider.isDarkMode,
             onChanged: (_) {
