@@ -1,6 +1,7 @@
-# nv_engine
+# NV Engine
 AI-based antivirus with AI-generated malware detection using Tensorflow, Ollama and Flutter.
-After scanning a file, it will give AI verdict for malware analysis to the user.
+This antivirus will run locally on your device with no internet dependency.
+After scanning a file, it will give a user-friendly AI verdict for malware analysis.
 
 ## Prerequisite
 Install [Ollama](https://ollama.com/library/llama3.2) (use llama3.2 for faster inference)
@@ -11,4 +12,6 @@ Install [Ollama](https://ollama.com/library/llama3.2) (use llama3.2 for faster i
 - Quarantine system with file actions (restore and permanent delete)
 - Runs in the background (can be closed on system tray)
 - Light/dark mode
+- Local antivirus with no network connection
+
   
