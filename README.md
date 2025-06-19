@@ -14,4 +14,5 @@ Install [Ollama](https://ollama.com/library/llama3.2) (use llama3.2 for faster i
 - Light/dark mode
 - Local antivirus with no network connection
 
-  
+## Model training on Colab
+To see how our model is trained, refer to our [Colab Notebook](https://colab.research.google.com/drive/1VmWOxTXLxhftlKCNX_EEfYXCLUE8kaX2?usp=sharing).
