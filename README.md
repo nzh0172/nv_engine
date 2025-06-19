@@ -1,22 +1,14 @@
 # nv_engine
+AI-based antivirus with AI-generated malware detection using Tensorflow, Ollama and Flutter.
+After scanning a file, it will give AI verdict for malware analysis to the user.
 
-A new Flutter project.
+## Prerequisite
+Install [Ollama](https://ollama.com/library/llama3.2) (use llama3.2 for faster inference)
 
-## Getting Started
-
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
-## Tensorflow Library (in Windows)
-
-Just get the premade tflite library instead of making it yourself with Bazel (cuz it never works)
-[tflite-disc](https://github.com/ValYouW/tflite-dist/releases)
-https://www.youtube.com/watch?v=vWbtLIwMrRE
+## Features
+- Scan individual file with scan report
+- Real-time detection with watcher on selected directory (default: Downloads)
+- Quarantine system with file actions (restore and permanent delete)
+- Runs in the background (can be closed on system tray)
+- Light/dark mode
+  
