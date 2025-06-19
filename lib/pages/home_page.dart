@@ -608,16 +608,16 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
         double iconSize = constraints.maxHeight * 0.2;
 
         return Padding(
-          padding: const EdgeInsets.all(40.0),
+          padding: const EdgeInsets.all(20.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
                 Icons.shield,
-                size: iconSize.clamp(120.0, 300.0),
+                size: iconSize.clamp(60.0, 150.0),
                 color: accentGreen,
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 10),
               Text(
                 _status,
                 style: TextStyle(
@@ -651,7 +651,7 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                   }
                 },
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 20),
               ElevatedButton(
                 onPressed: _isScanning ? null : _startScan,
                 style: ElevatedButton.styleFrom(
@@ -669,19 +669,30 @@ class _AntivirusHomePageState extends State<AntivirusHomePage> {
                   style: const TextStyle(fontSize: 18, color: Colors.white),
                 ),
               ),
+              const SizedBox(height: 30),
+              Text(
+                "AI Analysis Logs",
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
 
               const SizedBox(height: 15),
 
               // 3) Fake console
               Expanded(
                 child: Container(
-                  color: Colors.black,
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Theme.of(context).highlightColor,
+                    ),
+                    borderRadius: BorderRadius.circular(20),
+                    color: Colors.black,
+                  ),
                   padding: const EdgeInsets.all(8),
                   width: double.infinity,
                   child:
                       _consoleLog.isEmpty
                           ? const Text(
-                            'Logs will appear here…',
+                            'Waiting for scan...',
                             style: TextStyle(
                               color: Colors.greenAccent,
                               fontFamily: 'Courier',
